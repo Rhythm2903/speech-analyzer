@@ -25,7 +25,7 @@ const ensureString = (val: any, fallback: string): string => {
   if (typeof val === 'string') {
     let clean = val.trim();
     
-    // If the LLM returned a nested JSON string, parse it to extract and format cleanly
+    // If the LLM returned a nested JSON string inside the key, parse and format it recursively
     if (clean.startsWith('{') || clean.startsWith('[')) {
       try {
         const parsed = JSON.parse(clean);
@@ -172,13 +172,13 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "The audio was received, but no words could be transcribed." }, { status: 422 });
     }
 
-    // Step 2: UPGRADED System Prompts with strict plain-text prose rules (forbids nested JSON)
+    // Step 2: System Prompts for Specialized Agents with strict plain-text instructions
     const rhetoricAgentPrompt = `You are an elite, world-class speech and presidential rhetoric coach.
     Analyze the delivery patterns, vocabulary, estimated tone, structure, and pacing of the provided transcript.
     Provide an advanced communication critique focusing on:
-    1. Narrative Structure & Coherence (is there an engaging opening hook, logical thematic progression, and inspiring close?).
+    1. Narrative Structure & Coherence (is there an engaging opening hook, logical progression, and inspiring close?).
     2. Persuasive Language (effective use of metaphors, contrasting statements, rhythm, or triadic patterns).
-    3. Speaking Flow (pacing indicators, presence of complex sentence structures, or structural filler traps).
+    3. Speaking Flow (pacing indicators, complex sentence structures, or filler usage).
     Write in pure, clean, and highly readable prose paragraphs. Do NOT return JSON, nested lists, curly braces, colons, or code-like keys.
     Write exactly 2 structured, insightful paragraphs (maximum 120 words total).`;
 
