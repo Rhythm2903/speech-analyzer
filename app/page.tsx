@@ -6,7 +6,12 @@ import { useState, useRef, useEffect } from 'react';
 function TypewriterText({ text, speed = 15, onComplete }: { text: string; speed?: number; onComplete?: () => void }) {
   const [displayedText, setDisplayedText] = useState('');
   const textRef = useRef(text);
+  const onCompleteRef = useRef(onComplete);
   
+  useEffect(() => {
+    onCompleteRef.current = onComplete;
+  }, [onComplete]);
+
   useEffect(() => {
     textRef.current = text;
     setDisplayedText('');
@@ -19,12 +24,12 @@ function TypewriterText({ text, speed = 15, onComplete }: { text: string; speed?
         i++;
       } else {
         clearInterval(interval);
-        if (onComplete) onComplete();
+        if (onCompleteRef.current) onCompleteRef.current();
       }
     }, speed);
 
     return () => clearInterval(interval);
-  }, [text, speed, onComplete]);
+  }, [text, speed]);
 
   return <p className="text-slate-300 leading-relaxed text-sm whitespace-pre-line">{displayedText}</p>;
 }
@@ -56,7 +61,7 @@ export default function App() {
     };
   }, [videoSrc]);
 
-  // Orchestrates the sequential 8-second reveal process
+  // Orchestrates the streamlined sequential 4-second reveal process
   useEffect(() => {
     if (!analysis) {
       setActiveStep(0);
@@ -66,25 +71,25 @@ export default function App() {
     // Step 1: Reveal Transcript immediately
     setActiveStep(1);
 
-    // Step 2: Reveal Speaking Style after 8 seconds
+    // Step 2: Reveal Speaking Style after 4 seconds
     const timer1 = setTimeout(() => {
       setActiveStep(2);
-    }, 8000);
+    }, 4000);
 
-    // Step 3: Reveal Market Impact after another 8 seconds
+    // Step 3: Reveal Market Impact after another 4 seconds
     const timer2 = setTimeout(() => {
       setActiveStep(3);
-    }, 16000);
+    }, 8000);
 
-    // Step 4: Reveal Social Impact after another 8 seconds
+    // Step 4: Reveal Social Impact after another 4 seconds
     const timer3 = setTimeout(() => {
       setActiveStep(4);
-    }, 24000);
+    }, 12000);
 
-    // Step 5: Reveal Executive Summary synthesis after final 8 seconds
+    // Step 5: Reveal Executive Summary synthesis after final 4 seconds
     const timer4 = setTimeout(() => {
       setActiveStep(5);
-    }, 32000);
+    }, 16000);
 
     return () => {
       clearTimeout(timer1);
@@ -431,7 +436,7 @@ export default function App() {
                 </div>
               )}
 
-              {/* Step 2: Speaking Style Feedback (8-Second Gap) */}
+              {/* Step 2: Speaking Style Feedback (4-Second Gap) */}
               {activeStep >= 2 ? (
                 <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-md transition-all duration-500 animate-fade-in">
                   <div className="flex items-center justify-between mb-4">
@@ -467,7 +472,7 @@ export default function App() {
                 )
               )}
 
-              {/* Step 3: Market Impact (16-Second Gap) */}
+              {/* Step 3: Market Impact (Revealed at 8 seconds) */}
               {activeStep >= 3 ? (
                 <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 border-l-4 border-l-emerald-500 shadow-md transition-all duration-500 animate-fade-in">
                   <div className="flex items-center justify-between mb-3">
@@ -489,7 +494,7 @@ export default function App() {
                 )
               )}
 
-              {/* Step 4: Social Impact (24-Second Gap) */}
+              {/* Step 4: Social Impact (Revealed at 12 seconds) */}
               {activeStep >= 4 ? (
                 <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 border-l-4 border-l-purple-500 shadow-md transition-all duration-500 animate-fade-in">
                   <div className="flex items-center justify-between mb-3">
@@ -511,7 +516,7 @@ export default function App() {
                 )
               )}
 
-              {/* Step 5: Executive Summary (32-Second Gap - Master Synthesis from Compiling Agent) */}
+              {/* Step 5: Executive Summary (Revealed at 16 seconds) */}
               {activeStep >= 5 ? (
                 <div className="bg-slate-900 border-2 border-amber-500/30 rounded-2xl p-6 shadow-xl shadow-amber-950/10 transition-all duration-500 animate-fade-in bg-gradient-to-br from-slate-900 to-amber-950/20">
                   <div className="flex items-center justify-between mb-4">
