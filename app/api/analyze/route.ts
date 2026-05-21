@@ -1,5 +1,7 @@
-export const maxDuration = 60;
 import { NextRequest, NextResponse } from 'next/server';
+
+// Extend Vercel serverless function timeout to 60 seconds
+export const maxDuration = 60;
 
 export async function POST(req: NextRequest) {
   try {
@@ -10,17 +12,20 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'No audio binary stream received by the API route.' }, { status: 400 });
     }
 
+    // Guard: reject files over 8MB before processing
+    if (audioFile.size > 8 * 1024 * 1024) {
+      return NextResponse.json({ error: 'Audio file too large. Please use a shorter recording (under ~3 minutes).' }, { status: 413 });
+    }
+
     const apiKey = process.env.GROQ_API_KEY;
     if (!apiKey) {
       return NextResponse.json({ error: 'Internal setup failed: Server GROQ_API_KEY variable is not initialized.' }, { status: 500 });
     }
 
-    // Build standard, unlinked multipart form payload for external API delivery.
     const whisperFormData = new FormData();
     whisperFormData.append('file', audioFile, 'speech.wav');
     whisperFormData.append('model', 'whisper-large-v3');
 
-    // Placed exact string URL paths directly within standard fetch literals to guarantee strict parsing
     const transcriptionResponse = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${apiKey}` },
@@ -72,7 +77,6 @@ export async function POST(req: NextRequest) {
     const llmData = await llmResponse.json();
     let rawContent = llmData.choices[0].message.content.trim();
 
-    // Clean markdown blocks if the LLM leaked them despite json instruction
     if (rawContent.startsWith("```json")) {
       rawContent = rawContent.replace(/^```json/, "").replace(/```$/, "");
     } else if (rawContent.startsWith("```")) {
