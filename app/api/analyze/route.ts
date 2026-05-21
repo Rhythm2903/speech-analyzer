@@ -7,10 +7,10 @@ export const maxDuration = 60;
 const formatObjectToProse = (obj: any): string => {
   if (typeof obj !== 'object' || obj === null) return String(obj);
   return Object.entries(obj)
-    .map(([key, value]) => {
+    .map(([key, value]: [string, any]) => {
       const formattedKey = key
         .replace(/_/g, ' ')
-        .replace(/\b\w/g, c => c.toUpperCase());
+        .replace(/\b\w/g, (c: string) => c.toUpperCase());
       
       if (value && typeof value === 'object') {
         return `${formattedKey}:\n${formatObjectToProse(value)}`;
@@ -41,10 +41,10 @@ const ensureString = (val: any, fallback: string): string => {
       clean = clean.replace(/^[{\[\s"']+|[}\]\s"']+$/g, '');
       
       // Convert nested keys (e.g., "public_emotion_vectors":) into clean capitalized labels
-      clean = clean.replace(/"([^"]+)":\s*({|\[)?/g, (match, key) => {
+      clean = clean.replace(/"([^"]+)":\s*({|\[)?/g, (match: string, key: string) => {
         const formattedKey = key
           .replace(/_/g, ' ')
-          .replace(/\b\w/g, c => c.toUpperCase());
+          .replace(/\b\w/g, (c: string) => c.toUpperCase());
         return `\n${formattedKey}: `;
       });
       
@@ -60,7 +60,7 @@ const ensureString = (val: any, fallback: string): string => {
     return clean || fallback;
   }
   if (Array.isArray(val)) {
-    return val.map(item => (typeof item === 'object' ? ensureString(item, fallback) : String(item))).join('\n');
+    return val.map((item: any) => (typeof item === 'object' ? ensureString(item, fallback) : String(item))).join('\n');
   }
   if (val && typeof val === 'object') {
     // Look for standard flat text keys
