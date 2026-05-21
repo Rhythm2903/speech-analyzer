@@ -3,20 +3,61 @@ import { NextRequest, NextResponse } from 'next/server';
 // Extend Vercel serverless function timeout to 60 seconds
 export const maxDuration = 60;
 
+// Helper function to safely format nested JSON maps into beautiful plain text lines
+const formatObjectToProse = (obj: any): string => {
+  if (typeof obj !== 'object' || obj === null) return String(obj);
+  return Object.entries(obj)
+    .map(([key, value]) => {
+      const formattedKey = key
+        .replace(/_/g, ' ')
+        .replace(/\b\w/g, c => c.toUpperCase());
+      
+      if (value && typeof value === 'object') {
+        return `${formattedKey}:\n${formatObjectToProse(value)}`;
+      }
+      return `${formattedKey}: ${value}`;
+    })
+    .join('\n');
+};
+
 // Helper function to safely ensure a value is returned as a flat string to prevent React rendering crashes
 const ensureString = (val: any, fallback: string): string => {
   if (typeof val === 'string') {
-    const trimmed = val.trim();
+    let clean = val.trim();
+    
     // If the LLM returned a nested JSON string, parse it to extract and format cleanly
-    if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+    if (clean.startsWith('{') || clean.startsWith('[')) {
       try {
-        const parsed = JSON.parse(trimmed);
+        const parsed = JSON.parse(clean);
         return ensureString(parsed, fallback);
       } catch (e) {
-        // Continue as standard string if parsing fails
+        // Continue to regex cleanup if JSON parsing fails
       }
     }
-    return val;
+
+    // Direct JSON structural cleanup to capture unparsed curly braces, colons, or key-value structures
+    if (clean.includes('{"') || clean.includes('":') || clean.includes('}') || clean.includes('{')) {
+      // Strip starting/ending curly braces or brackets
+      clean = clean.replace(/^[{\[\s"']+|[}\]\s"']+$/g, '');
+      
+      // Convert nested keys (e.g., "public_emotion_vectors":) into clean capitalized labels
+      clean = clean.replace(/"([^"]+)":\s*({|\[)?/g, (match, key) => {
+        const formattedKey = key
+          .replace(/_/g, ' ')
+          .replace(/\b\w/g, c => c.toUpperCase());
+        return `\n${formattedKey}: `;
+      });
+      
+      // Remove double quotes, remaining curly braces, and commas
+      clean = clean
+        .replace(/["'{}\[\]]+/g, '')
+        .replace(/,(\s*\n)/g, '$1') // remove commas at ends of lines
+        .replace(/,\s*/g, ', ')     // balance spaces around commas
+        .replace(/\n\s*\n+/g, '\n') // strip excessive linebreaks
+        .trim();
+    }
+    
+    return clean || fallback;
   }
   if (Array.isArray(val)) {
     return val.map(item => (typeof item === 'object' ? ensureString(item, fallback) : String(item))).join('\n');
@@ -30,19 +71,7 @@ const ensureString = (val: any, fallback: string): string => {
       }
     }
     
-    // Convert generic key-value maps into beautiful human-readable lines instead of showing raw JSON brackets
-    return Object.entries(val)
-      .map(([key, value]) => {
-        const formattedKey = key
-          .replace(/_/g, ' ')
-          .replace(/\b\w/g, c => c.toUpperCase());
-        
-        if (value && typeof value === 'object') {
-          return `${formattedKey}:\n${ensureString(value, fallback)}`;
-        }
-        return `${formattedKey}: ${value}`;
-      })
-      .join('\n');
+    return formatObjectToProse(val);
   }
   return val ? String(val) : fallback;
 };
@@ -143,14 +172,14 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "The audio was received, but no words could be transcribed." }, { status: 422 });
     }
 
-    // Step 2: UPGRADED System Prompts for Specialized Agents
+    // Step 2: UPGRADED System Prompts with strict plain-text prose rules (forbids nested JSON)
     const rhetoricAgentPrompt = `You are an elite, world-class speech and presidential rhetoric coach.
     Analyze the delivery patterns, vocabulary, estimated tone, structure, and pacing of the provided transcript.
     Provide an advanced communication critique focusing on:
     1. Narrative Structure & Coherence (is there an engaging opening hook, logical thematic progression, and inspiring close?).
     2. Persuasive Language (effective use of metaphors, contrasting statements, rhythm, or triadic patterns).
     3. Speaking Flow (pacing indicators, presence of complex sentence structures, or structural filler traps).
-    Write in plain, simple, and highly readable prose paragraphs. Do NOT return JSON, nested lists, maps, or code-like keys.
+    Write in pure, clean, and highly readable prose paragraphs. Do NOT return JSON, nested lists, curly braces, colons, or code-like keys.
     Write exactly 2 structured, insightful paragraphs (maximum 120 words total).`;
 
     const macroeconomicAgentPrompt = `You are a legendary global macroeconomic strategist and financial analyst.
@@ -160,7 +189,7 @@ export async function POST(req: NextRequest) {
     2. Financial Stability metrics (Forex currency fluctuations, interest rate expectations, inflation projections).
     3. Mainstreet impact (local business confidence, borrow rates, retail prices, and overall consumer spending power).
     Explain these complex financial market movements using extremely simple, clear, everyday analogies.
-    Do NOT return JSON, nested maps, or code-like keys. Write in plain, standard prose paragraphs only.
+    Write in pure, clean, and highly readable prose paragraphs only. Do NOT return JSON objects, curly braces, colons, or code-like keys.
     Write exactly 2 structured, insightful paragraphs (maximum 120 words total).`;
 
     const geopoliticalAgentPrompt = `You are a senior geopolitical risk advisor and behavioral sociologist.
@@ -169,7 +198,7 @@ export async function POST(req: NextRequest) {
     1. Public Emotion Vectors (levels of inspiration, skepticism, trust adjustments, or anxiety spikes).
     2. Demographic Segments (how working-class communities, youth, and observers respond differently).
     3. Media Cycle Framings (how news outlets will spin the narrative, social trends, and polarization risks).
-    Write in plain, simple, standard prose paragraphs. Do NOT return JSON objects, brackets, or code-like maps.
+    Write in pure, clean, and highly readable prose paragraphs only. Do NOT return JSON objects, curly braces, colons, or code-like keys.
     Write exactly 2 structured, insightful paragraphs (maximum 120 words total).`;
 
     // Step 3: Run Upgraded Specialized Agents in Parallel
@@ -185,7 +214,7 @@ export async function POST(req: NextRequest) {
     Synthesize the reports, resolve any structural inconsistencies, refine the vocabulary, and format the output.
     Ensure that the high-fidelity depth, professional precision, and logical sequence of the individual reports are preserved, but always explain them in extremely clear, simple, and direct terms (no heavy academic, corporate, or financial jargon).
     Each key ("speaking_style_feedback", "market_impact", "social_impact", "executive_summary") MUST be a flat plain-text string (prose paragraphs). 
-    Do NOT return nested objects, maps, lists, brackets, or JSON blocks inside these keys.
+    Do NOT return nested objects, maps, lists, brackets, colons, or JSON blocks inside these keys.
     Do not wrap the overall output in markdown notation blocks. Return raw JSON text only.
     Keep your descriptions highly practical, accessible, and punchy.
     
