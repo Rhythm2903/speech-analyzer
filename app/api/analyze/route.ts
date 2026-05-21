@@ -7,15 +7,15 @@ export async function POST(req: NextRequest) {
     const audioFile = formData.get('audio') as File;
 
     if (!audioFile) {
-      return NextResponse.json({ error: 'No audio stream received' }, { status: 400 });
+      return NextResponse.json({ error: 'No audio file received' }, { status: 400 });
     }
 
     const apiKey = process.env.GROQ_API_KEY;
     if (!apiKey) {
-      return NextResponse.json({ error: 'Groq API Key missing on server configuration' }, { status: 500 });
+      return NextResponse.json({ error: 'Groq API Key configuration missing' }, { status: 500 });
     }
 
-    // Step 1: Forward the audio blob to Groq Whisper v3 for lightning-fast transcription
+    // Forward the optimized WAV file straight to Groq Whisper v3
     const whisperFormData = new FormData();
     whisperFormData.append('file', audioFile);
     whisperFormData.append('model', 'whisper-large-v3');
@@ -34,7 +34,7 @@ export async function POST(req: NextRequest) {
     const transcriptionData = await transcriptionResponse.json();
     const transcript = transcriptionData.text;
 
-    // Step 2: Feed the text into Llama 3 with precise metrics using JSON Mode
+    // Run the Llama-3 Analysis Matrix
     const systemPrompt = `You are an expert speech coach and a global macroeconomic analyst. Analyze the following transcript of a speech. Provide your analysis in a clean JSON format with the exact keys specified below. Treat the input as a significant address by an influential leader or policymaker.
     
     Required JSON keys:
@@ -55,19 +55,16 @@ export async function POST(req: NextRequest) {
           { role: 'system', content: systemPrompt },
           { role: 'user', content: `Transcript to analyze: "${transcript}"` }
         ],
-        response_format: { type: "json_object" }, // Forces a predictable JSON return payload
+        response_format: { type: "json_object" },
         temperature: 0.3,
       }),
     });
 
-    if (!llmResponse.ok) {
-      throw new Error('Llama 3 analysis generation failed');
-    }
+    if (!llmResponse.ok) throw new Error('Llama 3 analysis generation failed');
 
     const llmData = await llmResponse.json();
     const structuredAnalysis = JSON.parse(llmData.choices[0].message.content);
 
-    // Return the bundled transcription and structural breakdown to the client
     return NextResponse.json({
       transcript,
       ...structuredAnalysis
