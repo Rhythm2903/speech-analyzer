@@ -5,12 +5,44 @@ export const maxDuration = 60;
 
 // Helper function to safely ensure a value is returned as a flat string to prevent React rendering crashes
 const ensureString = (val: any, fallback: string): string => {
-  if (typeof val === 'string') return val;
+  if (typeof val === 'string') {
+    const trimmed = val.trim();
+    // If the LLM returned a nested JSON string, parse it to extract and format cleanly
+    if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        return ensureString(parsed, fallback);
+      } catch (e) {
+        // Continue as standard string if parsing fails
+      }
+    }
+    return val;
+  }
   if (Array.isArray(val)) {
-    return val.map(item => (typeof item === 'object' ? JSON.stringify(item) : String(item))).join(' ');
+    return val.map(item => (typeof item === 'object' ? ensureString(item, fallback) : String(item))).join('\n');
   }
   if (val && typeof val === 'object') {
-    return val.analysis || val.text || val.description || val.impact || JSON.stringify(val);
+    // Look for standard flat text keys
+    const flatKeys = ['analysis', 'text', 'description', 'impact', 'summary', 'feedback', 'result'];
+    for (const k of flatKeys) {
+      if (val[k] && typeof val[k] === 'string') {
+        return val[k];
+      }
+    }
+    
+    // Convert generic key-value maps into beautiful human-readable lines instead of showing raw JSON brackets
+    return Object.entries(val)
+      .map(([key, value]) => {
+        const formattedKey = key
+          .replace(/_/g, ' ')
+          .replace(/\b\w/g, c => c.toUpperCase());
+        
+        if (value && typeof value === 'object') {
+          return `${formattedKey}:\n${ensureString(value, fallback)}`;
+        }
+        return `${formattedKey}: ${value}`;
+      })
+      .join('\n');
   }
   return val ? String(val) : fallback;
 };
@@ -118,25 +150,26 @@ export async function POST(req: NextRequest) {
     1. Narrative Structure & Coherence (is there an engaging opening hook, logical thematic progression, and inspiring close?).
     2. Persuasive Language (effective use of metaphors, contrasting statements, rhythm, or triadic patterns).
     3. Speaking Flow (pacing indicators, presence of complex sentence structures, or structural filler traps).
-    Translate these professional diagnostic insights into simple, engaging, encouraging, and highly practical terms.
+    Write in plain, simple, and highly readable prose paragraphs. Do NOT return JSON, nested lists, maps, or code-like keys.
     Write exactly 2 structured, insightful paragraphs (maximum 120 words total).`;
 
     const macroeconomicAgentPrompt = `You are a legendary global macroeconomic strategist and financial analyst.
-    Evaluate the structural market impact of this speech if delivered on a world stage by an influential leader or policymaker.
-    Analyze the economic chain reaction, specifically detailing:
+    Evaluate the stock and market impact of this speech if delivered on a world stage by an influential leader or policymaker.
+    Analyze the economic chain reaction, explaining:
     1. Core Asset Movements (major indices like S&P 500, tech vs. commodity sectors, energy markets, and crypto).
     2. Financial Stability metrics (Forex currency fluctuations, interest rate expectations, inflation projections).
     3. Mainstreet impact (local business confidence, borrow rates, retail prices, and overall consumer spending power).
     Explain these complex financial market movements using extremely simple, clear, everyday analogies.
+    Do NOT return JSON, nested maps, or code-like keys. Write in plain, standard prose paragraphs only.
     Write exactly 2 structured, insightful paragraphs (maximum 120 words total).`;
 
     const geopoliticalAgentPrompt = `You are a senior geopolitical risk advisor and behavioral sociologist.
     Analyze how the general public, mainstream media, and global communities will feel, react, and respond to this speech.
     Detail a clear public response projection mapping:
     1. Public Emotion Vectors (levels of inspiration, skepticism, trust adjustments, or anxiety spikes).
-    2. Demographic Segments (how working-class communities, youth, and international observers respond differently).
-    3. Media Cycle Framings (how 24-hour news outlets will spin the narrative, social media trend directions, and polarization risks).
-    Explain these psychological and geopolitical reactions in clear, direct, and highly accessible terms.
+    2. Demographic Segments (how working-class communities, youth, and observers respond differently).
+    3. Media Cycle Framings (how news outlets will spin the narrative, social trends, and polarization risks).
+    Write in plain, simple, standard prose paragraphs. Do NOT return JSON objects, brackets, or code-like maps.
     Write exactly 2 structured, insightful paragraphs (maximum 120 words total).`;
 
     // Step 3: Run Upgraded Specialized Agents in Parallel
@@ -151,15 +184,17 @@ export async function POST(req: NextRequest) {
     
     Synthesize the reports, resolve any structural inconsistencies, refine the vocabulary, and format the output.
     Ensure that the high-fidelity depth, professional precision, and logical sequence of the individual reports are preserved, but always explain them in extremely clear, simple, and direct terms (no heavy academic, corporate, or financial jargon).
-    Do not wrap the output in markdown notation blocks. Return raw JSON text only.
+    Each key ("speaking_style_feedback", "market_impact", "social_impact", "executive_summary") MUST be a flat plain-text string (prose paragraphs). 
+    Do NOT return nested objects, maps, lists, brackets, or JSON blocks inside these keys.
+    Do not wrap the overall output in markdown notation blocks. Return raw JSON text only.
     Keep your descriptions highly practical, accessible, and punchy.
     
     Required JSON keys:
-    1. "speaking_style_feedback": Synthesized vocal delivery, structural coherence, pacing, and rhetoric report.
+    1. "speaking_style_feedback": Synthesized vocal delivery, structural coherence, pacing, and rhetoric report (flat string).
     2. "public_speaking_tips": A JSON array of exactly 3 short, actionable, plain-English bullet points to improve delivery.
-    3. "market_impact": Simple, direct, high-fidelity assessment of stock, currency, energy, and business implications.
-    4. "social_impact": Simple, clear evaluation of demographic responses, news narratives, and public sentiment shifts.
-    5. "executive_summary": A brilliant master summary (2-3 sentences) consolidating all agent reports into a high-level briefing.`;
+    3. "market_impact": Simple, direct, high-fidelity assessment of stock, currency, energy, and business implications (flat string).
+    4. "social_impact": Simple, clear evaluation of demographic responses, news narratives, and public sentiment shifts (flat string).
+    5. "executive_summary": A brilliant master summary (2-3 sentences) consolidating all agent reports into a high-level briefing (flat string).`;
 
     const compilePayload = {
       transcript: transcript,
