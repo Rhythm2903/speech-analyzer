@@ -8,82 +8,87 @@ export default function Home() {
   const [recording, setRecording] = useState(false);
   const [loading, setLoading] = useState(false);
   const [analysis, setAnalysis] = useState<any>(null);
-  const [uploadProgress, setUploadProgress] = useState<string>('');
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [statusMessage, setStatusMessage] = useState<string>('');
   
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const streamRef = useRef<MediaStream | null>(null);
 
-  // --- MAGICAL CLIENT-SIDE WAV AUDIO EXTRACTOR ---
-  // Rips audio from live streams or uploaded videos and converts it to a tiny 16kHz WAV
+  // Compression engine: Rips and downsamples audio files to 16kHz Mono WAV 
   const processToWav = async (fileOrBlob: Blob): Promise<Blob> => {
-    setUploadProgress('Extracting & compressing audio track...');
-    const arrayBuffer = await fileOrBlob.arrayBuffer();
-    const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
-    const audioCtx = new AudioContext();
-    
-    // Decode audio/video data directly in the browser
-    const decodedBuffer = await audioCtx.decodeAudioData(arrayBuffer);
-    
-    // Downsample to 16000Hz Mono (Whisper's absolute favorite format)
-    const offlineCtx = new OfflineAudioContext(1, decodedBuffer.duration * 16000, 16000);
-    const source = offlineCtx.createBufferSource();
-    source.buffer = decodedBuffer;
-    source.connect(offlineCtx.destination);
-    source.start();
-    
-    const renderedBuffer = await offlineCtx.startRendering();
-    
-    // Encode AudioBuffer to WAV format
-    const bufferArr = new ArrayBuffer(renderedBuffer.length * 2 + 44);
-    const view = new DataView(bufferArr);
-    
-    // Write WAV standard headers
-    const writeString = (offset: number, string: string) => {
-      for (let i = 0; i < string.length; i++) {
-        view.setUint8(offset + i, string.charCodeAt(i));
+    setStatusMessage('Extracting and optimizing audio tracks...');
+    try {
+      const arrayBuffer = await fileOrBlob.arrayBuffer();
+      const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
+      const audioCtx = new AudioContext();
+      
+      const decodedBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+      const offlineCtx = new OfflineAudioContext(1, decodedBuffer.duration * 16000, 16000);
+      
+      const source = offlineCtx.createBufferSource();
+      source.buffer = decodedBuffer;
+      source.connect(offlineCtx.destination);
+      source.start();
+      
+      const renderedBuffer = await offlineCtx.startRendering();
+      const bufferArr = new ArrayBuffer(renderedBuffer.length * 2 + 44);
+      const view = new DataView(bufferArr);
+      
+      const writeString = (offset: number, string: string) => {
+        for (let i = 0; i < string.length; i++) {
+          view.setUint8(offset + i, string.charCodeAt(i));
+        }
+      };
+      
+      writeString(0, 'RIFF');
+      view.setUint32(4, 36 + renderedBuffer.length * 2, true);
+      writeString(8, 'WAVE');
+      writeString(12, 'fmt ');
+      view.setUint32(16, 16, true);
+      view.setUint16(20, 1, true);
+      view.setUint16(22, 1, true);
+      view.setUint32(24, 16000, true);
+      view.setUint32(28, 16000 * 2, true);
+      view.setUint16(32, 2, true);
+      view.setUint16(34, 16, true);
+      writeString(36, 'data');
+      view.setUint32(40, renderedBuffer.length * 2, true);
+      
+      const channelData = renderedBuffer.getChannelData(0);
+      let offset = 44;
+      for (let i = 0; i < channelData.length; i++, offset += 2) {
+        let s = Math.max(-1, Math.min(1, channelData[i]));
+        view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
       }
-    };
-    writeString(0, 'RIFF');
-    view.setUint32(4, 36 + renderedBuffer.length * 2, true);
-    writeString(8, 'WAVE');
-    writeString(12, 'fmt ');
-    view.setUint32(16, 16, true);
-    view.setUint16(20, 1, true);
-    view.setUint16(22, 1, true);
-    view.setUint32(24, 16000, true);
-    view.setUint32(28, 16000 * 2, true);
-    view.setUint16(32, 2, true);
-    view.setUint16(34, 16, true);
-    writeString(36, 'data');
-    view.setUint32(40, renderedBuffer.length * 2, true);
-    
-    // Write PCM audio samples
-    const channelData = renderedBuffer.getChannelData(0);
-    let offset = 44;
-    for (let i = 0; i < channelData.length; i++, offset += 2) {
-      let s = Math.max(-1, Math.min(1, channelData[i]));
-      view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+      
+      return new Blob([bufferArr], { type: 'audio/wav' });
+    } catch (e) {
+      console.warn("WAV processing bypassed, using raw backup tracking stream.", e);
+      return fileOrBlob; // Fallback directly to raw audio if decoding fails
     }
-    
-    return new Blob([bufferArr], { type: 'audio/wav' });
   };
 
-  // --- LIVE RECORDING HANDLERS ---
+  // Live Recording Control Mechanisms
   const startRecording = async () => {
     try {
+      setAnalysis(null);
+      setErrorMessage(null);
       audioChunksRef.current = [];
+      
       const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
       streamRef.current = stream;
       
-      if (videoRef.current) videoRef.current.srcObject = stream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        videoRef.current.muted = true;
+        videoRef.current.play();
+      }
 
       const audioTrack = stream.getAudioTracks()[0];
       const audioStream = new MediaStream([audioTrack]);
-      
-      // Request standard audio encoding format
-      const mediaRecorder = new MediaRecorder(audioStream, { mimeType: 'audio/webm' });
+      const mediaRecorder = new MediaRecorder(audioStream);
       mediaRecorderRef.current = mediaRecorder;
 
       mediaRecorder.ondataavailable = (event) => {
@@ -99,7 +104,7 @@ export default function Home() {
       mediaRecorder.start();
       setRecording(true);
     } catch (err) {
-      alert("Please allow camera and microphone access.");
+      alert("Please ensure microphone and camera permissions are granted.");
     }
   };
 
@@ -113,27 +118,35 @@ export default function Home() {
     }
   };
 
-  // --- FILE UPLOAD HANDLER ---
+  // Upload Processing Mechanics with Media Preview Assignment
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
+    setAnalysis(null);
+    setErrorMessage(null);
     setLoading(true);
+
+    // Render the uploaded video file inside the visual preview layout window
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+      videoRef.current.src = URL.createObjectURL(file);
+      videoRef.current.muted = false;
+      videoRef.current.play();
+    }
+
     try {
-      // Process uploaded video or audio into a tiny standard WAV file
       const cleanWavBlob = await processToWav(file);
       await sendToAnalyzer(cleanWavBlob);
     } catch (error) {
-      console.error(error);
-      alert("Failed to process file. Make sure it's a valid video or audio format.");
+      setErrorMessage("Failed to read parameters from file type.");
       setLoading(false);
     }
   };
 
   const sendToAnalyzer = async (audioBlob: Blob) => {
     setLoading(true);
-    setUploadProgress('Analyzing speech metrics & calculating global impacts...');
-    setAnalysis(null);
+    setStatusMessage('AI engine generating impact breakdown metrics...');
     
     const formData = new FormData();
     formData.append('audio', audioBlob, 'speech.wav');
@@ -141,12 +154,17 @@ export default function Home() {
     try {
       const response = await fetch('/api/analyze', { method: 'POST', body: formData });
       const data = await response.json();
-      setAnalysis(data);
+      
+      if (data.error) {
+        setErrorMessage(data.error);
+      } else {
+        setAnalysis(data);
+      }
     } catch (error) {
-      console.error("Analysis failed:", error);
+      setErrorMessage("Network timed out or server configuration dropped the request.");
     } finally {
       setLoading(false);
-      setUploadProgress('');
+      setStatusMessage('');
     }
   };
 
@@ -160,97 +178,96 @@ export default function Home() {
 
       <div className="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-2 gap-8">
         
-        {/* Left Side: Input Methods */}
+        {/* Left Interactive Media Column */}
         <div className="flex flex-col gap-4 bg-slate-900 border border-slate-800 rounded-xl p-6">
           <div className="flex bg-slate-950 p-1 rounded-lg border border-slate-800">
             <button 
-              onClick={() => { setActiveTab('live'); setAnalysis(null); }}
+              onClick={() => { setActiveTab('live'); setAnalysis(null); setErrorMessage(null); }}
               className={`flex-1 py-2 text-sm font-medium rounded-md transition-all ${activeTab === 'live' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-slate-200'}`}
             >
               Live Presentation
             </button>
             <button 
-              onClick={() => { setActiveTab('upload'); setAnalysis(null); }}
+              onClick={() => { setActiveTab('upload'); setAnalysis(null); setErrorMessage(null); }}
               className={`flex-1 py-2 text-sm font-medium rounded-md transition-all ${activeTab === 'upload' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-slate-200'}`}
             >
-              Upload Video / Audio File
+              Upload Video / Audio
             </button>
           </div>
 
+          {/* Unified Media Player Window */}
+          <div className="aspect-video w-full bg-slate-950 rounded-lg overflow-hidden border border-slate-800 flex items-center justify-center relative">
+            <video ref={videoRef} controls={activeTab === 'upload'} playsInline className="w-full h-full object-contain" />
+          </div>
+
           {activeTab === 'live' ? (
-            <div className="flex flex-col gap-4">
-              <div className="aspect-video w-full bg-slate-950 rounded-lg overflow-hidden border border-slate-800 flex items-center justify-center relative">
-                <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover" />
-                {!recording && !loading && <p className="absolute text-sm text-slate-500">Camera Preview Offline</p>}
-              </div>
+            <div className="w-full">
               {!recording ? (
                 <button onClick={startRecording} disabled={loading} className="w-full py-3 px-4 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-medium rounded-lg transition-all">
-                  Start Presentation
+                  Start Live Recording
                 </button>
               ) : (
                 <button onClick={stopRecording} className="w-full py-3 px-4 bg-red-600 hover:bg-red-500 text-white font-medium rounded-lg transition-all animate-pulse">
-                  Stop & Run AI Diagnostics
+                  Stop & Run Analysis Matrix
                 </button>
               )}
             </div>
           ) : (
-            <div className="flex flex-col items-center justify-center border-2 border-dashed border-slate-800 rounded-lg p-12 bg-slate-950 hover:border-slate-700 transition-all relative">
-              <input 
-                type="file" 
-                accept="video/*,audio/*" 
-                onChange={handleFileUpload} 
-                disabled={loading}
-                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer disabled:cursor-not-allowed" 
-              />
+            <div className="flex flex-col items-center justify-center border-2 border-dashed border-slate-800 rounded-lg p-6 bg-slate-950 hover:border-slate-700 transition-all relative">
+              <input type="file" accept="video/*,audio/*" onChange={handleFileUpload} disabled={loading} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer disabled:cursor-not-allowed" />
               <div className="text-center pointer-events-none">
-                <p className="text-base font-medium text-slate-300">Drag and drop your speech file here</p>
-                <p className="text-xs text-slate-500 mt-1">Supports MP4, MOV, WEBM, MP3, WAV</p>
-                <button className="mt-4 px-4 py-2 bg-slate-800 hover:bg-slate-700 text-sm font-medium rounded-md text-slate-200">
-                  Select File
-                </button>
+                <p className="text-sm font-medium text-slate-300">Select or Drop Speech Media File Here</p>
+                <p className="text-xs text-slate-500 mt-1">Supports standard high definition audio/video formats</p>
               </div>
             </div>
           )}
         </div>
 
-        {/* Right Side: Real-Time AI Metrics */}
+        {/* Right Metric Processing Analytics Output Column */}
         <div className="flex flex-col gap-6">
           {loading && (
             <div className="flex-1 flex flex-col items-center justify-center bg-slate-900 border border-slate-800 rounded-xl p-12 text-center">
               <div className="w-12 h-12 border-4 border-t-blue-500 border-slate-800 rounded-full animate-spin mb-4"></div>
-              <p className="text-slate-300 font-medium">{uploadProgress}</p>
+              <p className="text-slate-300 font-medium">{statusMessage}</p>
             </div>
           )}
 
-          {!loading && !analysis && (
+          {errorMessage && (
+            <div className="bg-red-950/50 border border-red-800/60 rounded-xl p-6 text-red-200">
+              <h3 className="font-bold text-sm uppercase tracking-wider mb-1">System Error Encountered</h3>
+              <p className="text-sm text-red-300/90">{errorMessage}</p>
+            </div>
+          )}
+
+          {!loading && !analysis && !errorMessage && (
             <div className="flex-1 flex items-center justify-center bg-slate-900 border border-slate-800 rounded-xl p-12 text-slate-500 text-center border-dashed">
-              Provide a live speech or upload an file to generate analytics dashboards.
+              Feed or upload a presentation asset to activate deep learning analytics dashboards.
             </div>
           )}
 
           {analysis && (
             <div className="flex flex-col gap-6">
               <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
-                <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2">Transcribed Speech</h3>
+                <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2">Transcribed Speech Text</h3>
                 <p className="text-slate-300 italic">"{analysis.transcript}"</p>
               </div>
 
               <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
-                <h3 className="text-sm font-bold text-blue-400 mb-3">🎙️ Public Speaking & Rhetoric Feedback</h3>
+                <h3 className="text-sm font-bold text-blue-400 mb-3">🎙️ Presentation Rhetoric Metrics</h3>
                 <p className="text-slate-300 mb-4">{analysis.rhetoric_analysis}</p>
-                <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2">Actionable Improvements:</h4>
+                <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2">Actionable Delivery Tasks:</h4>
                 <ul className="list-disc pl-5 space-y-1 text-slate-300">
                   {analysis.public_speaking_tips?.map((tip: string, idx: number) => <li key={idx}>{tip}</li>)}
                 </ul>
               </div>
 
               <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 border-l-4 border-l-emerald-500">
-                <h3 className="text-sm font-bold text-emerald-400 mb-2">📊 Macroeconomic & Market Impact</h3>
+                <h3 className="text-sm font-bold text-emerald-400 mb-2">📊 Macroeconomic Impact Metrics</h3>
                 <p className="text-slate-300">{analysis.market_impact}</p>
               </div>
 
               <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 border-l-4 border-l-purple-500">
-                <h3 className="text-sm font-bold text-purple-400 mb-2">🌍 Societal & Public Behavior Impact</h3>
+                <h3 className="text-sm font-bold text-purple-400 mb-2">🌍 Geopolitical & Public Sentiment Shift</h3>
                 <p className="text-slate-300">{analysis.societal_impact}</p>
               </div>
             </div>
