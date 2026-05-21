@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 
+// Extend Vercel serverless function timeout to 60 seconds
 export const maxDuration = 60;
 
 export async function POST(req: NextRequest) {
@@ -11,9 +12,9 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'No audio binary stream received by the API route.' }, { status: 400 });
     }
 
-    // Reject raw files above 8MB in the server function itself as a fallback
+    // Guard: reject files over 8MB before processing
     if (audioFile.size > 8 * 1024 * 1024) {
-      return NextResponse.json({ error: 'Audio file too large. Please keep recordings under 3 minutes.' }, { status: 413 });
+      return NextResponse.json({ error: 'Audio file too large. Please use a shorter recording (under ~3 minutes).' }, { status: 413 });
     }
 
     const apiKey = process.env.GROQ_API_KEY;
@@ -63,7 +64,8 @@ export async function POST(req: NextRequest) {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'llama-3-3-70b-versatile',
+        // Switched to 'llama-3.1-8b-instant' to ensure universal access across all Groq account tiers
+        model: 'llama-3.1-8b-instant',
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: `Transcript to analyze: "${transcript}"` }
