@@ -88,11 +88,7 @@ export default function Home() {
       return new Blob([headerBuf, pcmData.buffer], { type: 'audio/wav' });
     } catch (e: any) {
       // Surface duration errors to user instead of silently falling back
-      if (e?.message?.includes('Recording is')) {
-        throw e;
-      }
-      console.warn("WAV processing bypassed, submitting raw stream.", e);
-      return fileOrBlob;
+      throw new Error(e?.message || "Audio context conversion failed. Please try a shorter recording or audio-only file.");
     }
   };
 
@@ -125,8 +121,13 @@ export default function Home() {
 
       mediaRecorder.onstop = async () => {
         const rawAudioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-        const cleanWavBlob = await processToWav(rawAudioBlob);
-        await sendToAnalyzer(cleanWavBlob);
+        try {
+          const cleanWavBlob = await processToWav(rawAudioBlob);
+          await sendToAnalyzer(cleanWavBlob);
+        } catch (err: any) {
+          setErrorMessage(err?.message || "Audio translation processes failed.");
+          setLoading(false);
+        }
       };
 
       mediaRecorder.start();
@@ -154,6 +155,13 @@ export default function Home() {
     setAnalysis(null);
     setErrorMessage(null);
     setLoading(true);
+
+    // Hard pre-upload check to prevent large payloads from crashing Vercel gateway
+    if (file.size > 12 * 1024 * 1024) {
+      setErrorMessage("File is too large (limit is 12MB). Please upload a shorter or more compressed video/audio clip.");
+      setLoading(false);
+      return;
+    }
 
     // Completely reset existing webcam stream bindings
     if (videoRef.current) {
@@ -200,6 +208,13 @@ export default function Home() {
       setStatusMessage('');
     }
   };
+
+  // Defensive array checks to guarantee React never crashes if the LLM changes formats
+  const tips = Array.isArray(analysis?.public_speaking_tips)
+    ? analysis.public_speaking_tips
+    : typeof analysis?.public_speaking_tips === 'string'
+      ? [analysis.public_speaking_tips]
+      : [];
 
   return (
     <main className="min-h-screen bg-slate-950 text-slate-50 p-6 md:p-12 font-sans selection:bg-blue-500 selection:text-white">
@@ -341,7 +356,7 @@ export default function Home() {
                 <div className="border-t border-slate-800/80 pt-4">
                   <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">Delivery Optimizations</h4>
                   <ul className="space-y-2 text-sm">
-                    {analysis.public_speaking_tips?.map((tip: string, idx: number) => (
+                    {tips.map((tip: string, idx: number) => (
                       <li key={idx} className="flex gap-2 text-slate-300">
                         <span className="text-blue-500 font-bold">•</span>
                         <span>{tip}</span>
