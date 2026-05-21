@@ -52,7 +52,7 @@ async function runAgent(apiKey: string, roleSystemPrompt: string, transcript: st
           { role: 'user', content: `Analyze the following transcript: "${transcript}"` }
         ],
         temperature: 0.1,
-        max_tokens: 300
+        max_tokens: 400
       }),
     });
 
@@ -111,42 +111,54 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "The audio was received, but no words could be transcribed." }, { status: 422 });
     }
 
-    // Step 2: System Prompts for Specialized Agents (Enforcing simple, accessible language)
-    const rhetoricAgentPrompt = `You are an elite, world-class speech and rhetoric coach.
-    Analyze the delivery patterns, vocabulary, tone, structure, and pacing of the provided transcript.
-    Avoid overly academic or complex terms. Speak directly, in highly simple, actionable advice.
-    Write exactly 2 short paragraphs (maximum 100 words total) explaining how the user can improve their communication style.`;
+    // Step 2: UPGRADED System Prompts for Specialized Agents
+    const rhetoricAgentPrompt = `You are an elite, world-class speech and presidential rhetoric coach.
+    Analyze the delivery patterns, vocabulary, estimated tone, structure, and pacing of the provided transcript.
+    Provide an advanced communication critique focusing on:
+    1. Narrative Structure & Coherence (is there an engaging opening hook, logical thematic progression, and inspiring close?).
+    2. Persuasive Language (effective use of metaphors, contrasting statements, rhythm, or triadic patterns).
+    3. Speaking Flow (pacing indicators, presence of complex sentence structures, or structural filler traps).
+    Translate these professional diagnostic insights into simple, engaging, encouraging, and highly practical terms.
+    Write exactly 2 structured, insightful paragraphs (maximum 120 words total).`;
 
-    const macroeconomicAgentPrompt = `You are a legendary global financial strategist.
-    Evaluate the stock and market impact of this speech if delivered on a world stage by a world leader.
-    Avoid complex financial jargon. Predict the simple, direct effects on everyday things like stock market trends, currency value, local business confidence, gas prices, or interest rates in plain terms.
-    Write exactly 2 short paragraphs (maximum 100 words total).`;
+    const macroeconomicAgentPrompt = `You are a legendary global macroeconomic strategist and financial analyst.
+    Evaluate the structural market impact of this speech if delivered on a world stage by an influential leader or policymaker.
+    Analyze the economic chain reaction, specifically detailing:
+    1. Core Asset Movements (major indices like S&P 500, tech vs. commodity sectors, energy markets, and crypto).
+    2. Financial Stability metrics (Forex currency fluctuations, interest rate expectations, inflation projections).
+    3. Mainstreet impact (local business confidence, borrow rates, retail prices, and overall consumer spending power).
+    Explain these complex financial market movements using extremely simple, clear, everyday analogies.
+    Write exactly 2 structured, insightful paragraphs (maximum 120 words total).`;
 
-    const geopoliticalAgentPrompt = `You are a sociological researcher and policy analyst.
-    Analyze how everyday people, the general public, families, and media channels will feel or react to this speech.
-    Will they feel inspired, nervous, unified, or skeptical? Explain their social reactions using plain, everyday terms.
-    Write exactly 2 short paragraphs (maximum 100 words total).`;
+    const geopoliticalAgentPrompt = `You are a senior geopolitical risk advisor and behavioral sociologist.
+    Analyze how the general public, mainstream media, and global communities will feel, react, and respond to this speech.
+    Detail a clear public response projection mapping:
+    1. Public Emotion Vectors (levels of inspiration, skepticism, trust adjustments, or anxiety spikes).
+    2. Demographic Segments (how working-class communities, youth, and international observers respond differently).
+    3. Media Cycle Framings (how 24-hour news outlets will spin the narrative, social media trend directions, and polarization risks).
+    Explain these psychological and geopolitical reactions in clear, direct, and highly accessible terms.
+    Write exactly 2 structured, insightful paragraphs (maximum 120 words total).`;
 
-    // Step 3: Run Specialized Agents in Parallel to Avoid Latency Accumulation
+    // Step 3: Run Upgraded Specialized Agents in Parallel
     const [rhetoricReport, marketReport, societalReport] = await Promise.all([
       runAgent(apiKey, rhetoricAgentPrompt, transcript, "Speaking style feedback processing encountered an error."),
       runAgent(apiKey, macroeconomicAgentPrompt, transcript, "Market impact analysis processing encountered an error."),
       runAgent(apiKey, geopoliticalAgentPrompt, transcript, "Social impact evaluation processing encountered an error.")
     ]);
 
-    // Step 4: Run the Executive Compiler Agent to synthesize the reports
-    const compilerSystemPrompt = `You are the Executive Compiler Agent. You take specialized analyst reports from three separate specialized agents (Speaking Style Analyst, Market Strategist, Social Reaction Analyst) and compile them into a beautifully integrated, synthesized presentation dashboard package in strict JSON format.
+    // Step 4: Run the Executive Compiler Agent to synthesize the reports with high-fidelity
+    const compilerSystemPrompt = `You are the Executive Compiler Agent. You take specialized intelligence reports from three separate specialized agents (Speaking Style Analyst, Market Strategist, Social Reaction Analyst) and compile them into a beautifully integrated, synthesized presentation dashboard package in strict JSON format.
     
-    Synthesize the reports, resolve any inconsistencies, refine the vocabulary, and format the output.
-    Explain things in extremely clear, simple, and direct terms (no heavy academic or corporate jargon).
+    Synthesize the reports, resolve any structural inconsistencies, refine the vocabulary, and format the output.
+    Ensure that the high-fidelity depth, professional precision, and logical sequence of the individual reports are preserved, but always explain them in extremely clear, simple, and direct terms (no heavy academic, corporate, or financial jargon).
     Do not wrap the output in markdown notation blocks. Return raw JSON text only.
     Keep your descriptions highly practical, accessible, and punchy.
     
     Required JSON keys:
-    1. "speaking_style_feedback": Synthesized vocal delivery, pacing, and style report.
+    1. "speaking_style_feedback": Synthesized vocal delivery, structural coherence, pacing, and rhetoric report.
     2. "public_speaking_tips": A JSON array of exactly 3 short, actionable, plain-English bullet points to improve delivery.
-    3. "market_impact": Simple, direct assessment of market, commodity, or business implications.
-    4. "social_impact": Simple, clear evaluation of social reactions and public sentiment.
+    3. "market_impact": Simple, direct, high-fidelity assessment of stock, currency, energy, and business implications.
+    4. "social_impact": Simple, clear evaluation of demographic responses, news narratives, and public sentiment shifts.
     5. "executive_summary": A brilliant master summary (2-3 sentences) consolidating all agent reports into a high-level briefing.`;
 
     const compilePayload = {
