@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-// Extend Vercel serverless function timeout to 60 seconds
 export const maxDuration = 60;
 
 export async function POST(req: NextRequest) {
@@ -12,9 +11,9 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'No audio binary stream received by the API route.' }, { status: 400 });
     }
 
-    // Guard: reject files over 8MB before processing
+    // Reject raw files above 8MB in the server function itself as a fallback
     if (audioFile.size > 8 * 1024 * 1024) {
-      return NextResponse.json({ error: 'Audio file too large. Please use a shorter recording (under ~3 minutes).' }, { status: 413 });
+      return NextResponse.json({ error: 'Audio file too large. Please keep recordings under 3 minutes.' }, { status: 413 });
     }
 
     const apiKey = process.env.GROQ_API_KEY;
@@ -44,13 +43,18 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "The audio was received, but no words could be transcribed." }, { status: 422 });
     }
 
-    const systemPrompt = `You are an expert speech coach and a global macroeconomic analyst. Analyze the following transcript of a speech. Provide your analysis in a clean JSON format with the exact keys specified below. Do not wrap the output in markdown notation blocks. Return raw JSON text only.
+    const systemPrompt = `You are an expert speech coach and a global macroeconomic analyst.
+    Analyze the following transcript of a speech. Provide your analysis in a clean JSON format. 
+    Do not wrap the output in markdown notation blocks. Return raw JSON text only.
+    Keep your analytical descriptions highly concise and punchy (maximum 120 words per key) 
+    to guarantee fast generation speeds and avoid timeouts. Ensure public_speaking_tips is returned 
+    as a strict JSON array of strings containing exactly 3 bullet points.
     
     Required JSON keys:
     1. "rhetoric_analysis": Evaluate pacing, tone, clarity, and structural impact.
     2. "public_speaking_tips": Array of 3 short, actionable bullet points to improve delivery.
-    3. "market_impact": Predict how this speech would influence global financial markets (e.g., Forex, Crypto, S&P 500 sectors) if declared on a world stage. Be hyper-specific.
-    4. "societal_impact": Explain how the mainstream public will react (e.g., public sentiment changes, consumer habits, civil unrest or stabilization).`;
+    3. "market_impact": Predict how this speech would influence global financial markets.
+    4. "societal_impact": Explain how the mainstream public will react.`;
 
     const llmResponse = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
@@ -59,7 +63,7 @@ export async function POST(req: NextRequest) {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'llama-3.3-70b-versatile',
+        model: 'llama-3-3-70b-versatile',
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: `Transcript to analyze: "${transcript}"` }
@@ -77,6 +81,7 @@ export async function POST(req: NextRequest) {
     const llmData = await llmResponse.json();
     let rawContent = llmData.choices[0].message.content.trim();
 
+    // Markdown sanitization block
     if (rawContent.startsWith("```json")) {
       rawContent = rawContent.replace(/^```json/, "").replace(/```$/, "");
     } else if (rawContent.startsWith("```")) {
@@ -85,9 +90,21 @@ export async function POST(req: NextRequest) {
 
     const structuredAnalysis = JSON.parse(rawContent.trim());
 
+    // Defensive normalizer guarantees that fields always exist and prevent rendering errors
+    const normalized = {
+      rhetoric_analysis: structuredAnalysis.rhetoric_analysis || "Analysis unavailable.",
+      public_speaking_tips: Array.isArray(structuredAnalysis.public_speaking_tips)
+        ? structuredAnalysis.public_speaking_tips
+        : typeof structuredAnalysis.public_speaking_tips === 'string'
+          ? [structuredAnalysis.public_speaking_tips]
+          : ["Practice clear pacing and focus on key structural transitions."],
+      market_impact: structuredAnalysis.market_impact || "Market impact analysis unavailable.",
+      societal_impact: structuredAnalysis.societal_impact || "Societal impact analysis unavailable."
+    };
+
     return NextResponse.json({
       transcript,
-      ...structuredAnalysis
+      ...normalized
     });
 
   } catch (error: any) {
