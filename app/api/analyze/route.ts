@@ -111,7 +111,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "The audio was received, but no words could be transcribed." }, { status: 422 });
     }
 
-    // Step 2: System Prompts for Specialized Agents (Modified prompts to enforce clean, easy-to-understand descriptions)
+    // Step 2: System Prompts for Specialized Agents (Enforcing simple, accessible language)
     const rhetoricAgentPrompt = `You are an elite, world-class speech and rhetoric coach.
     Analyze the delivery patterns, vocabulary, tone, structure, and pacing of the provided transcript.
     Avoid overly academic or complex terms. Speak directly, in highly simple, actionable advice.
@@ -127,7 +127,7 @@ export async function POST(req: NextRequest) {
     Will they feel inspired, nervous, unified, or skeptical? Explain their social reactions using plain, everyday terms.
     Write exactly 2 short paragraphs (maximum 100 words total).`;
 
-    // Step 3: Run Specialized Agents in Parallel to Avoid Latency Stack
+    // Step 3: Run Specialized Agents in Parallel to Avoid Latency Accumulation
     const [rhetoricReport, marketReport, societalReport] = await Promise.all([
       runAgent(apiKey, rhetoricAgentPrompt, transcript, "Speaking style feedback processing encountered an error."),
       runAgent(apiKey, macroeconomicAgentPrompt, transcript, "Market impact analysis processing encountered an error."),
