@@ -97,7 +97,7 @@ const ensureTipsArray = (val: any): string[] => {
   return ["Practice clear pacing and focus on key structural transitions."];
 };
 
-// Orchestrate a specialized agent call to Groq
+// Orchestrate a specialized agent call to Groq with elevated temperature
 async function runAgent(apiKey: string, roleSystemPrompt: string, transcript: string, fallbackText: string): Promise<string> {
   try {
     const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
@@ -112,7 +112,8 @@ async function runAgent(apiKey: string, roleSystemPrompt: string, transcript: st
           { role: 'system', content: roleSystemPrompt },
           { role: 'user', content: `Analyze the following transcript: "${transcript}"` }
         ],
-        temperature: 0.1,
+        // Elevated to 0.7 to introduce creative variance and prevent mode collapse
+        temperature: 0.7, 
         max_tokens: 400
       }),
     });
@@ -172,32 +173,26 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "The audio was received, but no words could be transcribed." }, { status: 422 });
     }
 
-    // Step 2: System Prompts for Specialized Agents with strict plain-text instructions
+    // Step 2: Context-Forcing System Prompts for Specialized Agents
     const rhetoricAgentPrompt = `You are an elite, world-class speech and presidential rhetoric coach.
     Analyze the delivery patterns, vocabulary, estimated tone, structure, and pacing of the provided transcript.
-    Provide an advanced communication critique focusing on:
-    1. Narrative Structure & Coherence (is there an engaging opening hook, logical progression, and inspiring close?).
-    2. Persuasive Language (effective use of metaphors, contrasting statements, rhythm, or triadic patterns).
-    3. Speaking Flow (pacing indicators, complex sentence structures, or filler usage).
+    Your analysis MUST be 100% customized to the specific theme, vocabulary, and topic of this transcript. Do NOT use generic template remarks.
+    Explicitly reference the core subject matter of the speech in your feedback. Critique how the speaker structured this exact argument.
     Write in pure, clean, and highly readable prose paragraphs. Do NOT return JSON, nested lists, curly braces, colons, or code-like keys.
     Write exactly 2 structured, insightful paragraphs (maximum 120 words total).`;
 
     const macroeconomicAgentPrompt = `You are a legendary global macroeconomic strategist and financial analyst.
     Evaluate the stock and market impact of this speech if delivered on a world stage by an influential leader or policymaker.
-    Analyze the economic chain reaction, explaining:
-    1. Core Asset Movements (major indices like S&P 500, tech vs. commodity sectors, energy markets, and crypto).
-    2. Financial Stability metrics (Forex currency fluctuations, interest rate expectations, inflation projections).
-    3. Mainstreet impact (local business confidence, borrow rates, retail prices, and overall consumer spending power).
-    Explain these complex financial market movements using extremely simple, clear, everyday analogies.
+    Your simulation MUST be directly driven by the specific industries, keywords, or policies mentioned in the transcript. Do NOT give generic financial warnings.
+    If the speech is about technology, isolate tech stock volatility. If it discusses energy, focus on oil/gas indices. If it touches on social topics, project how consumer confidence in related fields is affected.
+    Explain these movements using extremely simple, clear, everyday analogies.
     Write in pure, clean, and highly readable prose paragraphs only. Do NOT return JSON objects, curly braces, colons, or code-like keys.
     Write exactly 2 structured, insightful paragraphs (maximum 120 words total).`;
 
     const geopoliticalAgentPrompt = `You are a senior geopolitical risk advisor and behavioral sociologist.
     Analyze how the general public, mainstream media, and global communities will feel, react, and respond to this speech.
-    Detail a clear public response projection mapping:
-    1. Public Emotion Vectors (levels of inspiration, skepticism, trust adjustments, or anxiety spikes).
-    2. Demographic Segments (how working-class communities, youth, and observers respond differently).
-    3. Media Cycle Framings (how news outlets will spin the narrative, social trends, and polarization risks).
+    Your assessment MUST be 100% customized to the specific stance, emotional undertone, and claims made in the transcript. Do NOT write generic sentiment templates.
+    Identify how specific demographic groups would react to this exact topic and how media outlets will frame the narrative based on the specific words used.
     Write in pure, clean, and highly readable prose paragraphs only. Do NOT return JSON objects, curly braces, colons, or code-like keys.
     Write exactly 2 structured, insightful paragraphs (maximum 120 words total).`;
 
@@ -211,16 +206,15 @@ export async function POST(req: NextRequest) {
     // Step 4: Run the Executive Compiler Agent to synthesize the reports with high-fidelity
     const compilerSystemPrompt = `You are the Executive Compiler Agent. You take specialized intelligence reports from three separate specialized agents (Speaking Style Analyst, Market Strategist, Social Reaction Analyst) and compile them into a beautifully integrated, synthesized presentation dashboard package in strict JSON format.
     
-    Synthesize the reports, resolve any structural inconsistencies, refine the vocabulary, and format the output.
-    Ensure that the high-fidelity depth, professional precision, and logical sequence of the individual reports are preserved, but always explain them in extremely clear, simple, and direct terms (no heavy academic, corporate, or financial jargon).
-    Each key ("speaking_style_feedback", "market_impact", "social_impact", "executive_summary") MUST be a flat plain-text string (prose paragraphs). 
+    Synthesize the reports, ensuring that the final output is deeply customized to the actual subject matter and words of the original transcript. Resolve any structural inconsistencies and format the output.
+    Each key ("speaking_style_feedback", "market_impact", "social_impact", "executive_summary") MUST be a flat plain-text string (prose paragraphs) that directly references the specific themes of the transcript.
     Do NOT return nested objects, maps, lists, brackets, colons, or JSON blocks inside these keys.
     Do not wrap the overall output in markdown notation blocks. Return raw JSON text only.
     Keep your descriptions highly practical, accessible, and punchy.
     
     Required JSON keys:
     1. "speaking_style_feedback": Synthesized vocal delivery, structural coherence, pacing, and rhetoric report (flat string).
-    2. "public_speaking_tips": A JSON array of exactly 3 short, actionable, plain-English bullet points to improve delivery.
+    2. "public_speaking_tips": A JSON array of exactly 3 short, actionable, plain-English bullet points directly customized to improve the specific speech style shown in the transcript.
     3. "market_impact": Simple, direct, high-fidelity assessment of stock, currency, energy, and business implications (flat string).
     4. "social_impact": Simple, clear evaluation of demographic responses, news narratives, and public sentiment shifts (flat string).
     5. "executive_summary": A brilliant master summary (2-3 sentences) consolidating all agent reports into a high-level briefing (flat string).`;
@@ -245,7 +239,8 @@ export async function POST(req: NextRequest) {
           { role: 'user', content: `Compile this analyst payload: ${JSON.stringify(compilePayload)}` }
         ],
         response_format: { type: "json_object" },
-        temperature: 0.2,
+        // Elevated from 0.2 to 0.4 to prevent mode collapse while maintaining JSON layout integrity
+        temperature: 0.4, 
       }),
     });
 
