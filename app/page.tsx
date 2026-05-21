@@ -2,7 +2,34 @@
 
 import { useState, useRef, useEffect } from 'react';
 
-export default function Home() {
+// Premium Typewriter Text Component with character-by-character typing
+function TypewriterText({ text, speed = 15, onComplete }: { text: string; speed?: number; onComplete?: () => void }) {
+  const [displayedText, setDisplayedText] = useState('');
+  const textRef = useRef(text);
+  
+  useEffect(() => {
+    textRef.current = text;
+    setDisplayedText('');
+    if (!text) return;
+    
+    let i = 0;
+    const interval = setInterval(() => {
+      if (i < textRef.current.length) {
+        setDisplayedText((prev) => prev + textRef.current.charAt(i));
+        i++;
+      } else {
+        clearInterval(interval);
+        if (onComplete) onComplete();
+      }
+    }, speed);
+
+    return () => clearInterval(interval);
+  }, [text, speed, onComplete]);
+
+  return <p className="text-slate-300 leading-relaxed text-sm whitespace-pre-line">{displayedText}</p>;
+}
+
+export default function App() {
   const [activeTab, setActiveTab] = useState<'live' | 'upload'>('live');
   const [recording, setRecording] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -12,12 +39,15 @@ export default function Home() {
   const [videoSrc, setVideoSrc] = useState<string | null>(null);
   const [isAudioOnly, setIsAudioOnly] = useState<boolean>(false);
   
+  // Sequential step state tracker (0 = empty, 1 = transcript, 2 = style, 3 = market, 4 = social, 5 = summary)
+  const [activeStep, setActiveStep] = useState<number>(0);
+
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const streamRef = useRef<MediaStream | null>(null);
 
-  // Safely clean up video object URLs to avoid browser memory leaks
+  // Clean up Object URLs to prevent browser memory leaks
   useEffect(() => {
     return () => {
       if (videoSrc) {
@@ -26,13 +56,49 @@ export default function Home() {
     };
   }, [videoSrc]);
 
-  // Client-Side Audio Extractor & Compressive WAV Encoder
-  // Uses 8kHz mono to keep WAV output well under 4MB for Vercel limits.
-  // Whisper large-v3 handles 8kHz fine for speech transcription.
+  // Orchestrates the sequential 8-second reveal process
+  useEffect(() => {
+    if (!analysis) {
+      setActiveStep(0);
+      return;
+    }
+
+    // Step 1: Reveal Transcript immediately
+    setActiveStep(1);
+
+    // Step 2: Reveal Speaking Style after 8 seconds
+    const timer1 = setTimeout(() => {
+      setActiveStep(2);
+    }, 8000);
+
+    // Step 3: Reveal Market Impact after another 8 seconds
+    const timer2 = setTimeout(() => {
+      setActiveStep(3);
+    }, 16000);
+
+    // Step 4: Reveal Social Impact after another 8 seconds
+    const timer3 = setTimeout(() => {
+      setActiveStep(4);
+    }, 24000);
+
+    // Step 5: Reveal Executive Summary synthesis after final 8 seconds
+    const timer4 = setTimeout(() => {
+      setActiveStep(5);
+    }, 32000);
+
+    return () => {
+      clearTimeout(timer1);
+      clearTimeout(timer2);
+      clearTimeout(timer3);
+      clearTimeout(timer4);
+    };
+  }, [analysis]);
+
+  // Convert Media Recorder blobs to 8kHz Mono WAV to bypass Vercel limits
   const processToWav = async (fileOrBlob: Blob): Promise<Blob> => {
-    setStatusMessage('Compressing audio to optimized WAV format...');
-    const SAMPLE_RATE = 8000; // 8kHz: half the memory of 16kHz, Whisper handles it fine
-    const MAX_DURATION_SECONDS = 180; // 3 minute hard cap to prevent tab crash
+    setStatusMessage('Compressing and optimizing speech tracks...');
+    const SAMPLE_RATE = 8000;
+    const MAX_DURATION_SECONDS = 180; // 3-minute limit to prevent browser freezes
 
     try {
       const arrayBuffer = await fileOrBlob.arrayBuffer();
@@ -41,9 +107,8 @@ export default function Home() {
 
       const decodedBuffer = await audioCtx.decodeAudioData(arrayBuffer);
 
-      // Hard cap: reject audio longer than 3 minutes before allocating memory
       if (decodedBuffer.duration > MAX_DURATION_SECONDS) {
-        throw new Error(`Recording is ${Math.round(decodedBuffer.duration)}s. Please keep it under 3 minutes to avoid browser memory limits.`);
+        throw new Error(`Recording is ${Math.round(decodedBuffer.duration)}s. Keep under 3 minutes to stay within limits.`);
       }
 
       const numSamples = Math.floor(decodedBuffer.duration * SAMPLE_RATE);
@@ -57,26 +122,25 @@ export default function Home() {
       const renderedBuffer = await offlineCtx.startRendering();
       const channelData = renderedBuffer.getChannelData(0);
 
-      // Write WAV in chunks using Int16Array to avoid DataView loop overhead
       const pcmData = new Int16Array(channelData.length);
       for (let i = 0; i < channelData.length; i++) {
         const s = Math.max(-1, Math.min(1, channelData[i]));
         pcmData[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
       }
 
-      // Build WAV header
       const headerBuf = new ArrayBuffer(44);
       const view = new DataView(headerBuf);
       const writeString = (offset: number, str: string) => {
         for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i));
       };
+      
       writeString(0, 'RIFF');
       view.setUint32(4, 36 + pcmData.byteLength, true);
       writeString(8, 'WAVE');
       writeString(12, 'fmt ');
       view.setUint32(16, 16, true);
-      view.setUint16(20, 1, true);   // PCM
-      view.setUint16(22, 1, true);   // Mono
+      view.setUint16(20, 1, true); // PCM format
+      view.setUint16(22, 1, true); // Mono channel
       view.setUint32(24, SAMPLE_RATE, true);
       view.setUint32(28, SAMPLE_RATE * 2, true);
       view.setUint16(32, 2, true);
@@ -84,21 +148,23 @@ export default function Home() {
       writeString(36, 'data');
       view.setUint32(40, pcmData.byteLength, true);
 
-      // Combine header + PCM as separate blobs — avoids one giant ArrayBuffer allocation
       return new Blob([headerBuf, pcmData.buffer], { type: 'audio/wav' });
     } catch (e: any) {
-      // Surface duration errors to user instead of silently falling back
-      throw new Error(e?.message || "Audio context conversion failed. Please try a shorter recording or audio-only file.");
+      if (e?.message?.includes('Recording is')) {
+        throw e;
+      }
+      console.warn("WAV processing bypassed, utilizing standard upload stream fallback.", e);
+      return fileOrBlob;
     }
   };
 
-  // Recording Engine Control Hooks
   const startRecording = async () => {
     try {
       setAnalysis(null);
       setErrorMessage(null);
       setVideoSrc(null);
       setIsAudioOnly(false);
+      setActiveStep(0);
       audioChunksRef.current = [];
       
       const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
@@ -107,7 +173,7 @@ export default function Home() {
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
         videoRef.current.muted = true;
-        videoRef.current.play().catch(err => console.log("Video preview sync paused", err));
+        videoRef.current.play().catch(err => console.log("Video preview synchronized", err));
       }
 
       const audioTrack = stream.getAudioTracks()[0];
@@ -125,7 +191,7 @@ export default function Home() {
           const cleanWavBlob = await processToWav(rawAudioBlob);
           await sendToAnalyzer(cleanWavBlob);
         } catch (err: any) {
-          setErrorMessage(err?.message || "Audio translation processes failed.");
+          setErrorMessage(err?.message || "Failed to process target speech track.");
           setLoading(false);
         }
       };
@@ -133,7 +199,7 @@ export default function Home() {
       mediaRecorder.start();
       setRecording(true);
     } catch (err) {
-      alert("Microphone and camera permissions are required to begin live recording.");
+      alert("Camera and microphone access permissions are required to record.");
     }
   };
 
@@ -147,7 +213,6 @@ export default function Home() {
     }
   };
 
-  // Upload Management: Validates formats, generates object URLs, and triggers extraction pipelines
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -155,15 +220,14 @@ export default function Home() {
     setAnalysis(null);
     setErrorMessage(null);
     setLoading(true);
+    setActiveStep(0);
 
-    // Hard pre-upload check to prevent large payloads from crashing Vercel gateway
     if (file.size > 12 * 1024 * 1024) {
-      setErrorMessage("File is too large (limit is 12MB). Please upload a shorter or more compressed video/audio clip.");
+      setErrorMessage("File exceeds 12MB limit. Please compress your clip or upload a shorter file.");
       setLoading(false);
       return;
     }
 
-    // Completely reset existing webcam stream bindings
     if (videoRef.current) {
       videoRef.current.srcObject = null;
     }
@@ -172,7 +236,6 @@ export default function Home() {
     const isAudioFile = fileType.startsWith('audio/');
     setIsAudioOnly(isAudioFile);
 
-    // Bind media content to our active viewport canvas URL
     const fileUrl = URL.createObjectURL(file);
     setVideoSrc(fileUrl);
 
@@ -180,14 +243,14 @@ export default function Home() {
       const cleanWavBlob = await processToWav(file);
       await sendToAnalyzer(cleanWavBlob);
     } catch (error: any) {
-      setErrorMessage(error?.message || "System failed to convert media source file structures.");
+      setErrorMessage(error?.message || "Internal failure converting media track container.");
       setLoading(false);
     }
   };
 
   const sendToAnalyzer = async (audioBlob: Blob) => {
     setLoading(true);
-    setStatusMessage('Transcribing stream & computing macro-geopolitical impacts...');
+    setStatusMessage('Analyzing audio tracks via Agentic AI models...');
     
     const formData = new FormData();
     formData.append('audio', audioBlob, 'speech.wav');
@@ -197,19 +260,18 @@ export default function Home() {
       const data = await response.json();
       
       if (!response.ok || data.error) {
-        setErrorMessage(data.error || `Server gateway returned non-OK code: ${response.status}`);
+        setErrorMessage(data.error || `Processing gateway returned status: ${response.status}`);
       } else {
         setAnalysis(data);
       }
     } catch (error) {
-      setErrorMessage("The network timed out or the file size exceeded serverless payload limitations.");
+      setErrorMessage("The network timed out or the Vercel execution limit was reached.");
     } finally {
       setLoading(false);
       setStatusMessage('');
     }
   };
 
-  // Defensive array checks to guarantee React never crashes if the LLM changes formats
   const tips = Array.isArray(analysis?.public_speaking_tips)
     ? analysis.public_speaking_tips
     : typeof analysis?.public_speaking_tips === 'string'
@@ -217,42 +279,42 @@ export default function Home() {
       : [];
 
   return (
-    <main className="min-h-screen bg-slate-950 text-slate-50 p-6 md:p-12 font-sans selection:bg-blue-500 selection:text-white">
+    <main className="min-h-screen bg-slate-950 text-slate-50 p-6 md:p-12 font-sans selection:bg-indigo-500 selection:text-white">
       <header className="max-w-7xl mx-auto mb-10 border-b border-slate-800/80 pb-6 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
         <div>
           <h1 className="text-3xl md:text-4xl font-black tracking-tight bg-gradient-to-r from-blue-400 via-indigo-400 to-emerald-400 bg-clip-text text-transparent">
             AI Speech & Global Impact Analyzer
           </h1>
           <p className="text-slate-400 text-sm mt-1">
-            Evaluate presentational delivery, public speaking metrics, and simulate global macroeconomic ripples.
+            Evaluate speaking patterns, deliver diagnostics, and simulate world reactions in simple terms.
           </p>
         </div>
-        <div className="flex items-center gap-2 text-xs text-slate-400 bg-slate-900 border border-slate-800 rounded-full px-3 py-1.5 w-fit">
-          <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping"></span>
-          Groq Powered Pipeline
+        <div className="flex items-center gap-2 text-xs text-slate-400 bg-slate-900 border border-slate-800 rounded-full px-4 py-2 w-fit shadow-lg shadow-black/30">
+          <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
+          Parallel Agent Grid Enabled
         </div>
       </header>
 
       <div className="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-2 gap-8">
         
         {/* Left Interactive Control Column */}
-        <div className="flex flex-col gap-6 bg-slate-900/90 border border-slate-800 rounded-2xl p-6 shadow-xl shadow-slate-950/50 backdrop-blur-md">
+        <div className="flex flex-col gap-6 bg-slate-900/95 border border-slate-800 rounded-2xl p-6 shadow-2xl shadow-slate-950/60 backdrop-blur-md">
           <div className="flex bg-slate-950 p-1.5 rounded-xl border border-slate-800/80">
             <button 
               onClick={() => { setActiveTab('live'); setAnalysis(null); setErrorMessage(null); setVideoSrc(null); setIsAudioOnly(false); if(videoRef.current) { videoRef.current.srcObject = null; } }}
-              className={`flex-1 py-2.5 text-sm font-semibold rounded-lg transition-all duration-200 ${activeTab === 'live' ? 'bg-blue-600 text-white shadow-md shadow-blue-900/30' : 'text-slate-400 hover:text-slate-200'}`}
+              className={`flex-1 py-2.5 text-sm font-semibold rounded-lg transition-all duration-200 ${activeTab === 'live' ? 'bg-indigo-600 text-white shadow-md shadow-indigo-900/30' : 'text-slate-400 hover:text-slate-200'}`}
             >
               🎙️ Live Recording
             </button>
             <button 
               onClick={() => { setActiveTab('upload'); setAnalysis(null); setErrorMessage(null); setVideoSrc(null); if(videoRef.current) videoRef.current.srcObject = null; }}
-              className={`flex-1 py-2.5 text-sm font-semibold rounded-lg transition-all duration-200 ${activeTab === 'upload' ? 'bg-blue-600 text-white shadow-md shadow-blue-900/30' : 'text-slate-400 hover:text-slate-200'}`}
+              className={`flex-1 py-2.5 text-sm font-semibold rounded-lg transition-all duration-200 ${activeTab === 'upload' ? 'bg-indigo-600 text-white shadow-md shadow-indigo-900/30' : 'text-slate-400 hover:text-slate-200'}`}
             >
               📁 File Upload
             </button>
           </div>
 
-          {/* Player Sandbox Canvas */}
+          {/* Media Player Component */}
           <div className="aspect-video w-full bg-slate-950 rounded-xl overflow-hidden border border-slate-800/80 flex items-center justify-center relative group">
             {isAudioOnly ? (
               <div className="flex flex-col items-center justify-center text-center p-6 text-slate-400">
@@ -274,7 +336,7 @@ export default function Home() {
             {!videoSrc && !recording && !loading && (
               <div className="absolute text-center flex flex-col items-center gap-2 pointer-events-none p-4">
                 <span className="text-3xl text-slate-600 group-hover:scale-110 transition-transform duration-300">🎥</span>
-                <p className="text-xs font-semibold text-slate-600 tracking-wider uppercase">Media player standby</p>
+                <p className="text-xs font-semibold text-slate-600 tracking-wider uppercase">Media standby</p>
               </div>
             )}
           </div>
@@ -282,7 +344,7 @@ export default function Home() {
           {activeTab === 'live' ? (
             <div className="w-full">
               {!recording ? (
-                <button onClick={startRecording} disabled={loading} className="w-full py-4 px-4 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-bold rounded-xl transition-all duration-200 transform active:scale-[0.98]">
+                <button onClick={startRecording} disabled={loading} className="w-full py-4 px-4 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-bold rounded-xl transition-all duration-200 transform active:scale-[0.98] shadow-lg shadow-indigo-950/50">
                   Start Live Presentation
                 </button>
               ) : (
@@ -297,19 +359,19 @@ export default function Home() {
               <div className="text-center pointer-events-none flex flex-col items-center gap-2">
                 <span className="text-2xl text-slate-500 group-hover:translate-y-[-2px] transition-transform duration-300">📤</span>
                 <p className="text-sm font-semibold text-slate-300">Choose or drag a media file here</p>
-                <p className="text-xs text-slate-500">Supports standard container sizes (MP4, MOV, MP3, WAV)</p>
+                <p className="text-xs text-slate-500">Supports normal HD video/audio formats (MP4, MOV, MP3, WAV)</p>
               </div>
             </div>
           )}
         </div>
 
-        {/* Right Metric Processing Column */}
+        {/* Right Dashboard Results Column */}
         <div className="flex flex-col gap-6">
           {loading && (
-            <div className="flex-1 flex flex-col items-center justify-center bg-slate-900 border border-slate-800 rounded-2xl p-12 text-center min-h-[350px]">
+            <div className="flex-1 flex flex-col items-center justify-center bg-slate-900 border border-slate-800 rounded-2xl p-12 text-center min-h-[400px]">
               <div className="relative w-16 h-16 mb-6">
                 <div className="absolute inset-0 border-4 border-slate-800 rounded-full"></div>
-                <div className="absolute inset-0 border-4 border-t-blue-500 rounded-full animate-spin"></div>
+                <div className="absolute inset-0 border-4 border-t-indigo-500 rounded-full animate-spin"></div>
               </div>
               <p className="text-slate-300 font-medium text-sm tracking-wide">{statusMessage}</p>
             </div>
@@ -328,61 +390,149 @@ export default function Home() {
           )}
 
           {!loading && !analysis && !errorMessage && (
-            <div className="flex-1 flex flex-col items-center justify-center bg-slate-900/60 border border-slate-800/80 rounded-2xl p-12 text-slate-500 text-center border-dashed min-h-[350px]">
+            <div className="flex-1 flex flex-col items-center justify-center bg-slate-900/60 border border-slate-800/80 rounded-2xl p-12 text-slate-500 text-center border-dashed min-h-[400px]">
               <span className="text-4xl mb-4 opacity-50">📊</span>
-              <p className="text-sm max-w-sm">Capture a live presentation or drag in a recording to unlock the analytical report cards.</p>
+              <p className="text-sm max-w-sm leading-relaxed">Capture live speech or upload your file to start the sequential Multi-Agent diagnostic reveal.</p>
             </div>
           )}
 
-          {analysis && (
-            <div className="flex flex-col gap-6 animate-fade-in">
-              {/* Transcript Block */}
-              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-md">
-                <div className="flex items-center gap-2 mb-3">
-                  <span className="text-slate-400 text-xs font-bold uppercase tracking-widest">Speech Transcript</span>
-                </div>
-                <p className="text-slate-200 italic leading-relaxed text-sm bg-slate-950/50 p-4 border border-slate-800/40 rounded-xl">
-                  "{analysis.transcript}"
-                </p>
-              </div>
-
-              {/* Rhetoric Metric Block */}
-              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-md">
-                <div className="flex items-center gap-2 text-blue-400 mb-4">
-                  <span className="text-lg">🎙️</span>
-                  <h3 className="text-sm font-bold uppercase tracking-wider">Presentational Delivery Rhetoric</h3>
-                </div>
-                <p className="text-slate-300 leading-relaxed text-sm mb-5">{analysis.rhetoric_analysis}</p>
-                <div className="border-t border-slate-800/80 pt-4">
-                  <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">Delivery Optimizations</h4>
-                  <ul className="space-y-2 text-sm">
-                    {tips.map((tip: string, idx: number) => (
-                      <li key={idx} className="flex gap-2 text-slate-300">
-                        <span className="text-blue-500 font-bold">•</span>
-                        <span>{tip}</span>
-                      </li>
-                    ))}
-                  </ul>
+          {/* Sequential Reveal UI Elements */}
+          {analysis && !loading && (
+            <div className="flex flex-col gap-6">
+              
+              {/* Timeline Indicator Progress Bar */}
+              <div className="bg-slate-900 border border-slate-800/70 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-slate-400 shadow-md">
+                <span className="font-semibold text-slate-300 flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-indigo-500 animate-ping"></span>
+                  Sequential Diagnostic Sequence:
+                </span>
+                <div className="flex flex-wrap gap-1.5">
+                  <span className={`px-2 py-0.5 rounded transition-all ${activeStep >= 1 ? 'bg-blue-500/20 text-blue-400 font-bold border border-blue-500/30' : 'bg-slate-950 text-slate-600 border border-transparent'}`}>1. Transcript</span>
+                  <span className={`px-2 py-0.5 rounded transition-all ${activeStep >= 2 ? 'bg-indigo-500/20 text-indigo-400 font-bold border border-indigo-500/30' : 'bg-slate-950 text-slate-600 border border-transparent'}`}>2. Style</span>
+                  <span className={`px-2 py-0.5 rounded transition-all ${activeStep >= 3 ? 'bg-emerald-500/20 text-emerald-400 font-bold border border-emerald-500/30' : 'bg-slate-950 text-slate-600 border border-transparent'}`}>3. Market</span>
+                  <span className={`px-2 py-0.5 rounded transition-all ${activeStep >= 4 ? 'bg-purple-500/20 text-purple-400 font-bold border border-purple-500/30' : 'bg-slate-950 text-slate-600 border border-transparent'}`}>4. Social</span>
+                  <span className={`px-2 py-0.5 rounded transition-all ${activeStep >= 5 ? 'bg-amber-500/20 text-amber-400 font-bold border border-amber-500/30' : 'bg-slate-950 text-slate-600 border border-transparent'}`}>5. Summary</span>
                 </div>
               </div>
 
-              {/* Macro Impact Block */}
-              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 border-l-4 border-l-emerald-500 shadow-md">
-                <div className="flex items-center gap-2 text-emerald-400 mb-3">
-                  <span className="text-lg">📈</span>
-                  <h3 className="text-sm font-bold uppercase tracking-wider">Macroeconomic Ripple Analysis</h3>
+              {/* Step 1: Speech Transcript Block (Immediate) */}
+              {activeStep >= 1 && (
+                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-md transition-all duration-500 animate-fade-in">
+                  <div className="flex items-center justify-between mb-3">
+                    <span className="text-slate-400 text-xs font-bold uppercase tracking-widest flex items-center gap-2">
+                      <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse"></span>
+                      Speech Transcript
+                    </span>
+                    <span className="text-[10px] text-blue-500 font-semibold uppercase bg-blue-500/10 px-2 py-0.5 rounded border border-blue-500/20">Active</span>
+                  </div>
+                  <div className="bg-slate-950/50 p-4 border border-slate-800/40 rounded-xl">
+                    <TypewriterText text={`"${analysis.transcript}"`} speed={10} />
+                  </div>
                 </div>
-                <p className="text-slate-300 leading-relaxed text-sm">{analysis.market_impact}</p>
-              </div>
+              )}
 
-              {/* Societal Impact Block */}
-              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 border-l-4 border-l-purple-500 shadow-md">
-                <div className="flex items-center gap-2 text-purple-400 mb-3">
-                  <span className="text-lg">🌎</span>
-                  <h3 className="text-sm font-bold uppercase tracking-wider">Geopolitical & Sentiment Reactions</h3>
+              {/* Step 2: Speaking Style Feedback (8-Second Gap) */}
+              {activeStep >= 2 ? (
+                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-md transition-all duration-500 animate-fade-in">
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center gap-2 text-indigo-400">
+                      <span className="text-lg">🎙️</span>
+                      <h3 className="text-sm font-bold uppercase tracking-wider">Speaking Style Feedback</h3>
+                    </div>
+                    <span className="text-[10px] text-indigo-500 font-semibold uppercase bg-indigo-500/10 px-2 py-0.5 rounded border border-indigo-500/20">Synthesized</span>
+                  </div>
+                  <TypewriterText text={analysis.speaking_style_feedback} speed={15} />
+                  
+                  {tips.length > 0 && (
+                    <div className="border-t border-slate-800/80 pt-4 mt-4">
+                      <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">Key Improvement Tips</h4>
+                      <ul className="space-y-2 text-sm text-slate-300">
+                        {tips.map((tip: string, idx: number) => (
+                          <li key={idx} className="flex gap-2">
+                            <span className="text-indigo-500 font-bold">•</span>
+                            <span>{tip}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
                 </div>
-                <p className="text-slate-300 leading-relaxed text-sm">{analysis.societal_impact}</p>
-              </div>
+              ) : (
+                analysis && (
+                  <div className="bg-slate-900/40 border border-slate-800/60 rounded-2xl p-6 text-slate-600 flex items-center justify-center h-28 border-dashed">
+                    <p className="text-xs font-mono uppercase tracking-wider animate-pulse flex items-center gap-2">
+                      <span>🔓</span> Waiting for Speaking Style diagnostic sequence...
+                    </p>
+                  </div>
+                )
+              )}
+
+              {/* Step 3: Market Impact (16-Second Gap) */}
+              {activeStep >= 3 ? (
+                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 border-l-4 border-l-emerald-500 shadow-md transition-all duration-500 animate-fade-in">
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-2 text-emerald-400">
+                      <span className="text-lg">📈</span>
+                      <h3 className="text-sm font-bold uppercase tracking-wider">Market Impact</h3>
+                    </div>
+                    <span className="text-[10px] text-emerald-500 font-semibold uppercase bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">Simulated</span>
+                  </div>
+                  <TypewriterText text={analysis.market_impact} speed={15} />
+                </div>
+              ) : (
+                activeStep >= 2 && (
+                  <div className="bg-slate-900/40 border border-slate-800/60 rounded-2xl p-6 text-slate-600 flex items-center justify-center h-20 border-dashed">
+                    <p className="text-xs font-mono uppercase tracking-wider animate-pulse flex items-center gap-2">
+                      <span>🔓</span> Waiting for Market Impact diagnostic simulation...
+                    </p>
+                  </div>
+                )
+              )}
+
+              {/* Step 4: Social Impact (24-Second Gap) */}
+              {activeStep >= 4 ? (
+                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 border-l-4 border-l-purple-500 shadow-md transition-all duration-500 animate-fade-in">
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-2 text-purple-400">
+                      <span className="text-lg">🌎</span>
+                      <h3 className="text-sm font-bold uppercase tracking-wider">Social Impact</h3>
+                    </div>
+                    <span className="text-[10px] text-purple-500 font-semibold uppercase bg-purple-500/10 px-2 py-0.5 rounded border border-purple-500/20">Sentiment Mapped</span>
+                  </div>
+                  <TypewriterText text={analysis.social_impact} speed={15} />
+                </div>
+              ) : (
+                activeStep >= 3 && (
+                  <div className="bg-slate-900/40 border border-slate-800/60 rounded-2xl p-6 text-slate-600 flex items-center justify-center h-20 border-dashed">
+                    <p className="text-xs font-mono uppercase tracking-wider animate-pulse flex items-center gap-2">
+                      <span>🔓</span> Waiting for Social Impact sentiment mapping...
+                    </p>
+                  </div>
+                )
+              )}
+
+              {/* Step 5: Executive Summary (32-Second Gap - Master Synthesis from Compiling Agent) */}
+              {activeStep >= 5 ? (
+                <div className="bg-slate-900 border-2 border-amber-500/30 rounded-2xl p-6 shadow-xl shadow-amber-950/10 transition-all duration-500 animate-fade-in bg-gradient-to-br from-slate-900 to-amber-950/20">
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center gap-2 text-amber-400">
+                      <span className="text-lg">👑</span>
+                      <h3 className="text-sm font-bold uppercase tracking-wider">Executive Summary</h3>
+                    </div>
+                    <span className="text-[10px] text-amber-500 font-semibold uppercase bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20">Synthesized</span>
+                  </div>
+                  <TypewriterText text={analysis.executive_summary} speed={20} />
+                </div>
+              ) : (
+                activeStep >= 4 && (
+                  <div className="bg-slate-900/40 border border-slate-800/60 rounded-2xl p-6 text-slate-600 flex items-center justify-center h-20 border-dashed">
+                    <p className="text-xs font-mono uppercase tracking-wider animate-pulse flex items-center gap-2">
+                      <span>👑</span> Waiting for Master Compilation synthesis...
+                    </p>
+                  </div>
+                )
+              )}
+
             </div>
           )}
         </div>
