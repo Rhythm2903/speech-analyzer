@@ -27,55 +27,71 @@ export default function Home() {
   }, [videoSrc]);
 
   // Client-Side Audio Extractor & Compressive WAV Encoder
+  // Uses 8kHz mono to keep WAV output well under 4MB for Vercel limits.
+  // Whisper large-v3 handles 8kHz fine for speech transcription.
   const processToWav = async (fileOrBlob: Blob): Promise<Blob> => {
-    setStatusMessage('Compressing audio structures to high-fidelity 16kHz WAV format...');
+    setStatusMessage('Compressing audio to optimized WAV format...');
+    const SAMPLE_RATE = 8000; // 8kHz: half the memory of 16kHz, Whisper handles it fine
+    const MAX_DURATION_SECONDS = 180; // 3 minute hard cap to prevent tab crash
+
     try {
       const arrayBuffer = await fileOrBlob.arrayBuffer();
       const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
       const audioCtx = new AudioContext();
-      
+
       const decodedBuffer = await audioCtx.decodeAudioData(arrayBuffer);
-      const offlineCtx = new OfflineAudioContext(1, decodedBuffer.duration * 16000, 16000);
-      
+
+      // Hard cap: reject audio longer than 3 minutes before allocating memory
+      if (decodedBuffer.duration > MAX_DURATION_SECONDS) {
+        throw new Error(`Recording is ${Math.round(decodedBuffer.duration)}s. Please keep it under 3 minutes to avoid browser memory limits.`);
+      }
+
+      const numSamples = Math.floor(decodedBuffer.duration * SAMPLE_RATE);
+      const offlineCtx = new OfflineAudioContext(1, numSamples, SAMPLE_RATE);
+
       const source = offlineCtx.createBufferSource();
       source.buffer = decodedBuffer;
       source.connect(offlineCtx.destination);
       source.start();
-      
+
       const renderedBuffer = await offlineCtx.startRendering();
-      const bufferArr = new ArrayBuffer(renderedBuffer.length * 2 + 44);
-      const view = new DataView(bufferArr);
-      
-      const writeString = (offset: number, string: string) => {
-        for (let i = 0; i < string.length; i++) {
-          view.setUint8(offset + i, string.charCodeAt(i));
-        }
+      const channelData = renderedBuffer.getChannelData(0);
+
+      // Write WAV in chunks using Int16Array to avoid DataView loop overhead
+      const pcmData = new Int16Array(channelData.length);
+      for (let i = 0; i < channelData.length; i++) {
+        const s = Math.max(-1, Math.min(1, channelData[i]));
+        pcmData[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+      }
+
+      // Build WAV header
+      const headerBuf = new ArrayBuffer(44);
+      const view = new DataView(headerBuf);
+      const writeString = (offset: number, str: string) => {
+        for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i));
       };
-      
       writeString(0, 'RIFF');
-      view.setUint32(4, 36 + renderedBuffer.length * 2, true);
+      view.setUint32(4, 36 + pcmData.byteLength, true);
       writeString(8, 'WAVE');
       writeString(12, 'fmt ');
       view.setUint32(16, 16, true);
-      view.setUint16(20, 1, true);
-      view.setUint16(22, 1, true);
-      view.setUint32(24, 16000, true);
-      view.setUint32(28, 16000 * 2, true);
+      view.setUint16(20, 1, true);   // PCM
+      view.setUint16(22, 1, true);   // Mono
+      view.setUint32(24, SAMPLE_RATE, true);
+      view.setUint32(28, SAMPLE_RATE * 2, true);
       view.setUint16(32, 2, true);
       view.setUint16(34, 16, true);
       writeString(36, 'data');
-      view.setUint32(40, renderedBuffer.length * 2, true);
-      
-      const channelData = renderedBuffer.getChannelData(0);
-      let offset = 44;
-      for (let i = 0; i < channelData.length; i++, offset += 2) {
-        let s = Math.max(-1, Math.min(1, channelData[i]));
-        view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+      view.setUint32(40, pcmData.byteLength, true);
+
+      // Combine header + PCM as separate blobs — avoids one giant ArrayBuffer allocation
+      return new Blob([headerBuf, pcmData.buffer], { type: 'audio/wav' });
+    } catch (e: any) {
+      // Surface duration errors to user instead of silently falling back
+      if (e?.message?.includes('Recording is')) {
+        throw e;
       }
-      
-      return new Blob([bufferArr], { type: 'audio/wav' });
-    } catch (e) {
-      console.warn("WAV processing bypassed, submitting the raw backup media stream directly.", e);
+      console.warn("WAV processing bypassed, submitting raw stream.", e);
       return fileOrBlob;
     }
   };
@@ -155,8 +171,8 @@ export default function Home() {
     try {
       const cleanWavBlob = await processToWav(file);
       await sendToAnalyzer(cleanWavBlob);
-    } catch (error) {
-      setErrorMessage("System failed to convert media source file structures.");
+    } catch (error: any) {
+      setErrorMessage(error?.message || "System failed to convert media source file structures.");
       setLoading(false);
     }
   };
