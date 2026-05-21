@@ -3,6 +3,39 @@ import { NextRequest, NextResponse } from 'next/server';
 // Extend Vercel serverless function timeout to 60 seconds
 export const maxDuration = 60;
 
+// Helper function to safely ensure a value is returned as a flat string to prevent React rendering crashes
+const ensureString = (val: any, fallback: string): string => {
+  if (typeof val === 'string') return val;
+  if (Array.isArray(val)) {
+    return val.map(item => (typeof item === 'object' ? JSON.stringify(item) : String(item))).join(' ');
+  }
+  if (val && typeof val === 'object') {
+    return val.analysis || val.text || val.description || val.impact || JSON.stringify(val);
+  }
+  return val ? String(val) : fallback;
+};
+
+// Helper function to safely ensure public speaking tips are returned strictly as an array of plain strings
+const ensureTipsArray = (val: any): string[] => {
+  if (Array.isArray(val)) {
+    return val.map((item: any) => {
+      if (typeof item === 'string') return item;
+      if (item && typeof item === 'object') {
+        return item.tip || item.text || item.bullet || item.description || JSON.stringify(item);
+      }
+      return String(item);
+    });
+  }
+  if (typeof val === 'string') {
+    return [val];
+  }
+  if (val && typeof val === 'object') {
+    const extracted = val.tip || val.text || val.bullet || val.description || JSON.stringify(val);
+    return [extracted];
+  }
+  return ["Practice clear pacing and focus on key structural transitions."];
+};
+
 export async function POST(req: NextRequest) {
   try {
     const formData = await req.formData();
@@ -64,7 +97,6 @@ export async function POST(req: NextRequest) {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        // Switched to 'llama-3.1-8b-instant' to ensure universal access across all Groq account tiers
         model: 'llama-3.1-8b-instant',
         messages: [
           { role: 'system', content: systemPrompt },
@@ -92,16 +124,12 @@ export async function POST(req: NextRequest) {
 
     const structuredAnalysis = JSON.parse(rawContent.trim());
 
-    // Defensive normalizer guarantees that fields always exist and prevent rendering errors
+    // Defensive normalizer guarantees that fields always exist as primitives and prevent rendering errors
     const normalized = {
-      rhetoric_analysis: structuredAnalysis.rhetoric_analysis || "Analysis unavailable.",
-      public_speaking_tips: Array.isArray(structuredAnalysis.public_speaking_tips)
-        ? structuredAnalysis.public_speaking_tips
-        : typeof structuredAnalysis.public_speaking_tips === 'string'
-          ? [structuredAnalysis.public_speaking_tips]
-          : ["Practice clear pacing and focus on key structural transitions."],
-      market_impact: structuredAnalysis.market_impact || "Market impact analysis unavailable.",
-      societal_impact: structuredAnalysis.societal_impact || "Societal impact analysis unavailable."
+      rhetoric_analysis: ensureString(structuredAnalysis.rhetoric_analysis, "Analysis unavailable."),
+      public_speaking_tips: ensureTipsArray(structuredAnalysis.public_speaking_tips),
+      market_impact: ensureString(structuredAnalysis.market_impact, "Market impact analysis unavailable."),
+      societal_impact: ensureString(structuredAnalysis.societal_impact, "Societal impact analysis unavailable.")
     };
 
     return NextResponse.json({
