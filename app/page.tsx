@@ -1,7 +1,7 @@
 // app/page.tsx
 'use client';
 
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 
 export default function Home() {
   const [activeTab, setActiveTab] = useState<'live' | 'upload'>('live');
@@ -10,15 +10,23 @@ export default function Home() {
   const [analysis, setAnalysis] = useState<any>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string>('');
+  const [videoSrc, setVideoSrc] = useState<string | null>(null);
   
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const streamRef = useRef<MediaStream | null>(null);
 
-  // Compression engine: Rips and downsamples audio files to 16kHz Mono WAV 
+  // Clean up video object URLs to avoid browser memory leaks
+  useEffect(() => {
+    return () => {
+      if (videoSrc) URL.revokeObjectURL(videoSrc);
+    };
+  }, [videoSrc]);
+
+  // Client-Side Audio Compressor & Extractor
   const processToWav = async (fileOrBlob: Blob): Promise<Blob> => {
-    setStatusMessage('Extracting and optimizing audio tracks...');
+    setStatusMessage('Extracting and compressing audio track...');
     try {
       const arrayBuffer = await fileOrBlob.arrayBuffer();
       const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
@@ -65,16 +73,17 @@ export default function Home() {
       
       return new Blob([bufferArr], { type: 'audio/wav' });
     } catch (e) {
-      console.warn("WAV processing bypassed, using raw backup tracking stream.", e);
-      return fileOrBlob; // Fallback directly to raw audio if decoding fails
+      console.warn("WAV processing bypassed, utilizing raw audio tracking backup.", e);
+      return fileOrBlob;
     }
   };
 
-  // Live Recording Control Mechanisms
+  // Live Recording Handlers
   const startRecording = async () => {
     try {
       setAnalysis(null);
       setErrorMessage(null);
+      setVideoSrc(null);
       audioChunksRef.current = [];
       
       const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
@@ -83,7 +92,7 @@ export default function Home() {
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
         videoRef.current.muted = true;
-        videoRef.current.play();
+        videoRef.current.play().catch(err => console.log("Video play interrupted", err));
       }
 
       const audioTrack = stream.getAudioTracks()[0];
@@ -118,7 +127,7 @@ export default function Home() {
     }
   };
 
-  // Upload Processing Mechanics with Media Preview Assignment
+  // File Upload Handler (Using React State for the Video Source)
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -127,26 +136,27 @@ export default function Home() {
     setErrorMessage(null);
     setLoading(true);
 
-    // Render the uploaded video file inside the visual preview layout window
+    // Completely clear any previous webcam stream bindings
     if (videoRef.current) {
       videoRef.current.srcObject = null;
-      videoRef.current.src = URL.createObjectURL(file);
-      videoRef.current.muted = false;
-      videoRef.current.play();
     }
+
+    // Assign the file directly to React State to force safe, reliable UI binding
+    const fileUrl = URL.createObjectURL(file);
+    setVideoSrc(fileUrl);
 
     try {
       const cleanWavBlob = await processToWav(file);
       await sendToAnalyzer(cleanWavBlob);
     } catch (error) {
-      setErrorMessage("Failed to read parameters from file type.");
+      setErrorMessage("Failed to read processing tracks from file type.");
       setLoading(false);
     }
   };
 
   const sendToAnalyzer = async (audioBlob: Blob) => {
     setLoading(true);
-    setStatusMessage('AI engine generating impact breakdown metrics...');
+    setStatusMessage('AI engine running analytical calculations...');
     
     const formData = new FormData();
     formData.append('audio', audioBlob, 'speech.wav');
@@ -155,13 +165,13 @@ export default function Home() {
       const response = await fetch('/api/analyze', { method: 'POST', body: formData });
       const data = await response.json();
       
-      if (data.error) {
-        setErrorMessage(data.error);
+      if (!response.ok || data.error) {
+        setErrorMessage(data.error || `Server returned status code: ${response.status}`);
       } else {
         setAnalysis(data);
       }
     } catch (error) {
-      setErrorMessage("Network timed out or server configuration dropped the request.");
+      setErrorMessage("Network connection timed out or Vercel execution threshold limit reached.");
     } finally {
       setLoading(false);
       setStatusMessage('');
@@ -178,26 +188,35 @@ export default function Home() {
 
       <div className="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-2 gap-8">
         
-        {/* Left Interactive Media Column */}
+        {/* Left Control Column */}
         <div className="flex flex-col gap-4 bg-slate-900 border border-slate-800 rounded-xl p-6">
           <div className="flex bg-slate-950 p-1 rounded-lg border border-slate-800">
             <button 
-              onClick={() => { setActiveTab('live'); setAnalysis(null); setErrorMessage(null); }}
+              onClick={() => { setActiveTab('live'); setAnalysis(null); setErrorMessage(null); setVideoSrc(null); if(videoRef.current) videoRef.current.src = ''; }}
               className={`flex-1 py-2 text-sm font-medium rounded-md transition-all ${activeTab === 'live' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-slate-200'}`}
             >
               Live Presentation
             </button>
             <button 
-              onClick={() => { setActiveTab('upload'); setAnalysis(null); setErrorMessage(null); }}
+              onClick={() => { setActiveTab('upload'); setAnalysis(null); setErrorMessage(null); setVideoSrc(null); if(videoRef.current) videoRef.current.srcObject = null; }}
               className={`flex-1 py-2 text-sm font-medium rounded-md transition-all ${activeTab === 'upload' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-slate-200'}`}
             >
               Upload Video / Audio
             </button>
           </div>
 
-          {/* Unified Media Player Window */}
+          {/* Video Preview Canvas */}
           <div className="aspect-video w-full bg-slate-950 rounded-lg overflow-hidden border border-slate-800 flex items-center justify-center relative">
-            <video ref={videoRef} controls={activeTab === 'upload'} playsInline className="w-full h-full object-contain" />
+            <video 
+              ref={videoRef} 
+              src={videoSrc || undefined} 
+              controls={activeTab === 'upload'} 
+              playsInline 
+              className="w-full h-full object-contain" 
+            />
+            {!videoSrc && !recording && !loading && (
+              <p className="absolute text-sm text-slate-500">Media Playback Viewport Offline</p>
+            )}
           </div>
 
           {activeTab === 'live' ? (
@@ -208,7 +227,7 @@ export default function Home() {
                 </button>
               ) : (
                 <button onClick={stopRecording} className="w-full py-3 px-4 bg-red-600 hover:bg-red-500 text-white font-medium rounded-lg transition-all animate-pulse">
-                  Stop & Run Analysis Matrix
+                  Stop & Run Diagnostics
                 </button>
               )}
             </div>
@@ -217,13 +236,13 @@ export default function Home() {
               <input type="file" accept="video/*,audio/*" onChange={handleFileUpload} disabled={loading} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer disabled:cursor-not-allowed" />
               <div className="text-center pointer-events-none">
                 <p className="text-sm font-medium text-slate-300">Select or Drop Speech Media File Here</p>
-                <p className="text-xs text-slate-500 mt-1">Supports standard high definition audio/video formats</p>
+                <p className="text-xs text-slate-500 mt-1">Supports standard audio/video formats (MP4, MOV, MP3, WAV)</p>
               </div>
             </div>
           )}
         </div>
 
-        {/* Right Metric Processing Analytics Output Column */}
+        {/* Right Output Analytical Display Column */}
         <div className="flex flex-col gap-6">
           {loading && (
             <div className="flex-1 flex flex-col items-center justify-center bg-slate-900 border border-slate-800 rounded-xl p-12 text-center">
@@ -234,7 +253,7 @@ export default function Home() {
 
           {errorMessage && (
             <div className="bg-red-950/50 border border-red-800/60 rounded-xl p-6 text-red-200">
-              <h3 className="font-bold text-sm uppercase tracking-wider mb-1">System Error Encountered</h3>
+              <h3 className="font-bold text-sm uppercase tracking-wider mb-1">System Pipeline Error</h3>
               <p className="text-sm text-red-300/90">{errorMessage}</p>
             </div>
           )}
