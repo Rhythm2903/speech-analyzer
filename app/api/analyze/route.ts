@@ -7,21 +7,20 @@ export async function POST(req: NextRequest) {
     const audioFile = formData.get('audio') as File;
 
     if (!audioFile) {
-      return NextResponse.json({ error: 'No usable audio stream file arrived at server.' }, { status: 400 });
+      return NextResponse.json({ error: 'No audio file stream received at the server gateway.' }, { status: 400 });
     }
 
     const apiKey = process.env.GROQ_API_KEY;
     if (!apiKey) {
-      return NextResponse.json({ error: 'Server Environment Configuration Error: missing GROQ_API_KEY.' }, { status: 500 });
+      return NextResponse.json({ error: 'Configuration Error: Missing GROQ_API_KEY environment variable.' }, { status: 500 });
     }
 
-    // CRITICAL PATCH: We MUST explicitly attach a file format signature ('speech.wav')
-    // inside the backend FormData mapping layer so Groq handles the multipart binary file cleanly.
+    // Package and submit standard multipart form payload straight to Groq Whisper v3
     const whisperFormData = new FormData();
     whisperFormData.append('file', audioFile, 'speech.wav');
     whisperFormData.append('model', 'whisper-large-v3');
 
-    const transcriptionResponse = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
+    const transcriptionResponse = await fetch('[https://api.groq.com/openai/v1/audio/transcriptions](https://api.groq.com/openai/v1/audio/transcriptions)', {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${apiKey}` },
       body: whisperFormData,
@@ -29,17 +28,17 @@ export async function POST(req: NextRequest) {
 
     if (!transcriptionResponse.ok) {
       const errText = await transcriptionResponse.text();
-      return NextResponse.json({ error: `Groq Whisper Audio Process Exception: ${errText}` }, { status: 500 });
+      return NextResponse.json({ error: `Whisper Transcription Subsystem Failure: ${errText}` }, { status: 500 });
     }
 
     const transcriptionData = await transcriptionResponse.json();
     const transcript = transcriptionData.text;
 
     if (!transcript || transcript.trim().length === 0) {
-      return NextResponse.json({ error: "Audio captured cleanly, but Whisper could not parse or resolve spoken words from the file input." }, { status: 422 });
+      return NextResponse.json({ error: "Audio processed smoothly, but no spoken speech structures could be parsed." }, { status: 422 });
     }
 
-    const systemPrompt = `You are an expert speech coach and a global macroeconomic analyst. Analyze the following transcript of a speech. Provide your analysis in a clean JSON format with the exact keys specified below. Treat the input as a significant address by an influential leader or policymaker.
+    const systemPrompt = `You are an expert speech coach and a global macroeconomic analyst. Analyze the following transcript of a speech. Provide your analysis in a clean JSON format with the exact keys specified below. Do not wrap the output in markdown notation blocks. Return raw JSON text only.
     
     Required JSON keys:
     1. "rhetoric_analysis": Evaluate pacing, tone, clarity, and structural impact.
@@ -47,7 +46,7 @@ export async function POST(req: NextRequest) {
     3. "market_impact": Predict how this speech would influence global financial markets (e.g., Forex, Crypto, S&P 500 sectors) if declared on a world stage. Be hyper-specific.
     4. "societal_impact": Explain how the mainstream public will react (e.g., public sentiment changes, consumer habits, civil unrest or stabilization).`;
 
-    const llmResponse = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+    const llmResponse = await fetch('[https://api.groq.com/openai/v1/chat/completions](https://api.groq.com/openai/v1/chat/completions)', {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${apiKey}`,
@@ -60,16 +59,26 @@ export async function POST(req: NextRequest) {
           { role: 'user', content: `Transcript to analyze: "${transcript}"` }
         ],
         response_format: { type: "json_object" },
-        temperature: 0.3,
+        temperature: 0.2,
       }),
     });
 
     if (!llmResponse.ok) {
-      return NextResponse.json({ error: 'Groq Llama semantic analytics engine processing error.' }, { status: 500 });
+      const errText = await llmResponse.text();
+      return NextResponse.json({ error: `Llama 3 Text Analytics Subsystem Failure: ${errText}` }, { status: 500 });
     }
 
     const llmData = await llmResponse.json();
-    const structuredAnalysis = JSON.parse(llmData.choices[0].message.content);
+    let rawContent = llmData.choices[0].message.content.trim();
+
+    // BULLETPROOF CLEANUP PATCH: Strip away markdown backtick code blocks if the LLM leaks them
+    if (rawContent.startsWith("```json")) {
+      rawContent = rawContent.replace(/^```json/, "").replace(/```$/, "");
+    } else if (rawContent.startsWith("```")) {
+      rawContent = rawContent.replace(/^```/, "").replace(/```$/, "");
+    }
+
+    const structuredAnalysis = JSON.parse(rawContent.trim());
 
     return NextResponse.json({
       transcript,
@@ -77,7 +86,7 @@ export async function POST(req: NextRequest) {
     });
 
   } catch (error: any) {
-    console.error('API Error Exception:', error);
-    return NextResponse.json({ error: error.message || 'Fatal internal processing loop execution failure.' }, { status: 500 });
+    console.error('API Exception Loop caught:', error);
+    return NextResponse.json({ error: error.message || 'Fatal background sequence execution failure.' }, { status: 500 });
   }
 }
