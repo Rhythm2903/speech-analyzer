@@ -111,41 +111,43 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "The audio was received, but no words could be transcribed." }, { status: 422 });
     }
 
-    // Step 2: System Prompts for Specialized Agents
+    // Step 2: System Prompts for Specialized Agents (Modified prompts to enforce clean, easy-to-understand descriptions)
     const rhetoricAgentPrompt = `You are an elite, world-class speech and rhetoric coach.
-    Analyze the delivery patterns, vocabulary, estimated tone, structure, and pacing of the provided transcript.
-    Pinpoint structural strengths, vocabulary issues, filler usage, and delivery issues.
-    Be concise and professional. Write exactly 2 paragraphs (maximum 120 words total).`;
+    Analyze the delivery patterns, vocabulary, tone, structure, and pacing of the provided transcript.
+    Avoid overly academic or complex terms. Speak directly, in highly simple, actionable advice.
+    Write exactly 2 short paragraphs (maximum 100 words total) explaining how the user can improve their communication style.`;
 
-    const macroeconomicAgentPrompt = `You are a legendary global macroeconomic strategist and quantitative hedge fund analyst.
-    Evaluate the structural market impact of this speech if delivered on a world stage by a key policymaker or world leader.
-    Predict specific effects on major equity indices (S&P 500), currency pairs (Forex), energy, gold, and decentralized digital currencies (Crypto).
-    Be hyper-focused on macroeconomic variables. Write exactly 2 paragraphs (maximum 120 words total).`;
+    const macroeconomicAgentPrompt = `You are a legendary global financial strategist.
+    Evaluate the stock and market impact of this speech if delivered on a world stage by a world leader.
+    Avoid complex financial jargon. Predict the simple, direct effects on everyday things like stock market trends, currency value, local business confidence, gas prices, or interest rates in plain terms.
+    Write exactly 2 short paragraphs (maximum 100 words total).`;
 
-    const geopoliticalAgentPrompt = `You are a geopolitical risk advisor and behavioral sociologist.
-    Analyze how the general public, mainstream media, and political adversaries will react to this speech.
-    Detail shifts in public confidence, trust indices, legislative changes, policy pressure, and social stability.
-    Write exactly 2 paragraphs (maximum 120 words total).`;
+    const geopoliticalAgentPrompt = `You are a sociological researcher and policy analyst.
+    Analyze how everyday people, the general public, families, and media channels will feel or react to this speech.
+    Will they feel inspired, nervous, unified, or skeptical? Explain their social reactions using plain, everyday terms.
+    Write exactly 2 short paragraphs (maximum 100 words total).`;
 
     // Step 3: Run Specialized Agents in Parallel to Avoid Latency Stack
     const [rhetoricReport, marketReport, societalReport] = await Promise.all([
-      runAgent(apiKey, rhetoricAgentPrompt, transcript, "Rhetoric analysis processing failed."),
-      runAgent(apiKey, macroeconomicAgentPrompt, transcript, "Macroeconomic impact processing failed."),
-      runAgent(apiKey, geopoliticalAgentPrompt, transcript, "Geopolitical impact processing failed.")
+      runAgent(apiKey, rhetoricAgentPrompt, transcript, "Speaking style feedback processing encountered an error."),
+      runAgent(apiKey, macroeconomicAgentPrompt, transcript, "Market impact analysis processing encountered an error."),
+      runAgent(apiKey, geopoliticalAgentPrompt, transcript, "Social impact evaluation processing encountered an error.")
     ]);
 
     // Step 4: Run the Executive Compiler Agent to synthesize the reports
-    const compilerSystemPrompt = `You are the Executive compiler AI. You take specialized intelligence reports from three separate analyst agents (Rhetoric Analyst, Macroeconomic Strategist, Geopolitical Risk Analyst) and compile them into a synthesized, final presentation dashboard package in strict JSON format.
+    const compilerSystemPrompt = `You are the Executive Compiler Agent. You take specialized analyst reports from three separate specialized agents (Speaking Style Analyst, Market Strategist, Social Reaction Analyst) and compile them into a beautifully integrated, synthesized presentation dashboard package in strict JSON format.
     
     Synthesize the reports, resolve any inconsistencies, refine the vocabulary, and format the output.
+    Explain things in extremely clear, simple, and direct terms (no heavy academic or corporate jargon).
     Do not wrap the output in markdown notation blocks. Return raw JSON text only.
-    Keep your descriptions highly professional, concise, and punchy.
+    Keep your descriptions highly practical, accessible, and punchy.
     
     Required JSON keys:
-    1. "rhetoric_analysis": Synthesized structural delivery and coaching analysis.
-    2. "public_speaking_tips": A JSON array of exactly 3 short, actionable bullet points to improve delivery.
-    3. "market_impact": Synthesized global financial market predictions.
-    4. "societal_impact": Synthesized public, sociological, and legislative impact predictions.`;
+    1. "speaking_style_feedback": Synthesized vocal delivery, pacing, and style report.
+    2. "public_speaking_tips": A JSON array of exactly 3 short, actionable, plain-English bullet points to improve delivery.
+    3. "market_impact": Simple, direct assessment of market, commodity, or business implications.
+    4. "social_impact": Simple, clear evaluation of social reactions and public sentiment.
+    5. "executive_summary": A brilliant master summary (2-3 sentences) consolidating all agent reports into a high-level briefing.`;
 
     const compilePayload = {
       transcript: transcript,
@@ -190,10 +192,11 @@ export async function POST(req: NextRequest) {
 
     // Defensive normalizer flattens structured fields to prevent React crashes
     const normalized = {
-      rhetoric_analysis: ensureString(structuredAnalysis.rhetoric_analysis, "Analysis unavailable."),
+      speaking_style_feedback: ensureString(structuredAnalysis.speaking_style_feedback, "Analysis unavailable."),
       public_speaking_tips: ensureTipsArray(structuredAnalysis.public_speaking_tips),
       market_impact: ensureString(structuredAnalysis.market_impact, "Market impact analysis unavailable."),
-      societal_impact: ensureString(structuredAnalysis.societal_impact, "Societal impact analysis unavailable.")
+      social_impact: ensureString(structuredAnalysis.social_impact, "Social impact analysis unavailable."),
+      executive_summary: ensureString(structuredAnalysis.executive_summary, "Executive summary compilation unavailable.")
     };
 
     return NextResponse.json({
