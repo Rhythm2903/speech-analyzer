@@ -208,7 +208,7 @@ export default function Home() {
         <div className="flex flex-col gap-6 bg-slate-900/90 border border-slate-800 rounded-2xl p-6 shadow-xl shadow-slate-950/50 backdrop-blur-md">
           <div className="flex bg-slate-950 p-1.5 rounded-xl border border-slate-800/80">
             <button 
-              onClick={() => { setActiveTab('live'); setAnalysis(null); setErrorMessage(null); setVideoSrc(null); if(videoRef.current) videoRef.current.src = ''; }}
+              onClick={() => { setActiveTab('live'); setAnalysis(null); setErrorMessage(null); setVideoSrc(null); setIsAudioOnly(false); if(videoRef.current) { videoRef.current.srcObject = null; } }}
               className={`flex-1 py-2.5 text-sm font-semibold rounded-lg transition-all duration-200 ${activeTab === 'live' ? 'bg-blue-600 text-white shadow-md shadow-blue-900/30' : 'text-slate-400 hover:text-slate-200'}`}
             >
               🎙️ Live Recording
